@@ -1,0 +1,1 @@
+# TrustFX-AI-Trading-Terminal.tech
