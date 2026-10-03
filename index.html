@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>TrustFX AI Trading Terminal</title>
+
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: #070b12;
+    color: #e8edf5;
+}
+
+button {
+    font-family: inherit;
+}
+
+/* TOP BAR */
+.topbar {
+    height: 70px;
+    background: #0c111b;
+    border-bottom: 1px solid #1d2635;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 25px;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logo-box {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    background: linear-gradient(135deg,#00d4ff,#0066ff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    color: white;
+}
+
+.logo h1 {
+    font-size: 20px;
+}
+
+.logo span {
+    color: #00d4ff;
+}
+
+.status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #8f9bad;
+}
+
+.status-dot {
+    width: 9px;
+    height: 9px;
+    background: #19d879;
+    border-radius: 50%;
+    box-shadow: 0 0 10px #19d879;
+}
+
+/* LAYOUT */
+.container {
+    padding: 20px;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 280px 1fr 300px;
+    gap: 18px;
+}
+
+/* CARDS */
+.card {
+    background: #0c111b;
+    border: 1px solid #1d2635;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.card-header {
+    padding: 15px;
+    border-bottom: 1px solid #1d2635;
+    font-weight: bold;
+}
+
+.card-body {
+    padding: 15px;
+}
+
+/* SCANNER */
+.market {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 13px 10px;
+    border-bottom: 1px solid #18202d;
+    cursor: pointer;
+}
+
+.market:hover {
+    background: #111927;
+}
+
+.market-name {
+    font-weight: bold;
+}
+
+.market-price {
+    font-size: 12px;
+    color: #7e8b9d;
+    margin-top: 4px;
+}
+
+.signal {
+    padding: 6px 9px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.buy {
+    background: rgba(25,216,121,.12);
+    color: #19d879;
+}
+
+.sell {
+    background: rgba(255,75,75,.12);
+    color: #ff5c5c;
+}
+
+.wait {
+    background: rgba(255,193,7,.12);
+    color: #ffc107;
+}
+
+/* CHART */
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    border-bottom: 1px solid #1d2635;
+}
+
+.symbol {
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.price {
+    color: #19d879;
+    font-size: 14px;
+}
+
+.timeframes {
+    display: flex;
+    gap: 5px;
+}
+
+.tf {
+    border: 1px solid #263245;
+    background: #111826;
+    color: #8f9bad;
+    padding: 6px 9px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.tf.active {
+    background: #0066ff;
+    color: white;
+    border-color: #0066ff;
+}
+
+.chart {
+    height: 480px;
+    position: relative;
+    overflow: hidden;
+    background:
+        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+    background-size: 50px 50px;
+}
+
+.chart svg {
+    width: 100%;
+    height: 100%;
+}
+
+.chart-label {
+    position: absolute;
+    padding: 5px 8px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.entry {
+    left: 57%;
+    top: 53%;
+    background: #0066ff;
+}
+
+.sl {
+    left: 57%;
+    top: 67%;
+    background: #ff4747;
+}
+
+.tp1 {
+    left: 80%;
+    top: 31%;
+    background: #19a866;
+}
+
+/* ANALYSIS */
+.analysis-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 11px 0;
+    border-bottom: 1px solid #18202d;
+}
+
+.analysis-row:last-child {
+    border-bottom: none;
+}
+
+.label {
+    color: #8290a4;
+}
+
+.value {
+    font-weight: bold;
+}
+
+.green {
+    color: #19d879;
+}
+
+.red {
+    color: #ff5c5c;
+}
+
+.yellow {
+    color: #ffc107;
+}
+
+/* TRADE PANEL */
+.trade-signal {
+    text-align: center;
+    padding: 20px;
+    margin-bottom: 15px;
+    border-radius: 10px;
+    background: rgba(25,216,121,.08);
+    border: 1px solid rgba(25,216,121,.25);
+}
+
+.trade-signal h2 {
+    color: #19d879;
+    font-size: 28px;
+}
+
+.trade-signal p {
+    color: #8f9bad;
+    margin-top: 6px;
+}
+
+.level {
+    display: flex;
+    justify-content: space-between;
+    padding: 12px;
+    margin-bottom: 8px;
+    background: #111826;
+    border-radius: 7px;
+}
+
+.level span:first-child {
+    color: #8290a4;
+}
+
+.level span:last-child {
+    font-weight: bold;
+}
+
+.confirmation {
+    margin-top: 15px;
+}
+
+.confirmation-title {
+    margin-bottom: 10px;
+    font-weight: bold;
+}
+
+.confirm {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    font-size: 13px;
+}
+
+.check {
+    color: #19d879;
+}
+
+/* FOOTER */
+.footer {
+    text-align: center;
+    color: #526074;
+    padding: 20px;
+    font-size: 12px;
+}
+
+/* RESPONSIVE */
+@media(max-width:1100px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media(max-width:600px) {
+    .topbar {
+        padding: 0 12px;
+    }
+
+    .container {
+        padding: 10px;
+    }
+
+    .chart {
+        height: 350px;
+    }
+
+    .status {
+        display: none;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<header class="topbar">
+
+    <div class="logo">
+        <div class="logo-box">TF</div>
+        <h1>TRUST<span>FX</span></h1>
+    </div>
+
+    <div class="status">
+        <div class="status-dot"></div>
+        Market Monitor Online
+    </div>
+
+</header>
+
+
+<main class="container">
+
+<div class="grid">
+
+<!-- MARKET SCANNER -->
+
+<section class="card">
+
+    <div class="card-header">
+        Market Scanner
+    </div>
+
+    <div class="card-body">
+
+        <div class="market">
+            <div>
+                <div class="market-name">XAUUSD</div>
+                <div class="market-price">Gold</div>
+            </div>
+            <div class="signal buy">BUY</div>
+        </div>
+
+        <div class="market">
+            <div>
+                <div class="market-name">EURUSD</div>
+                <div class="market-price">Euro / USD</div>
+            </div>
+            <div class="signal wait">WAIT</div>
+        </div>
+
+        <div class="market">
+            <div>
+                <div class="market-name">GBPUSD</div>
+                <div class="market-price">Pound / USD</div>
+            </div>
+            <div class="signal sell">SELL</div>
+        </div>
+
+        <div class="market">
+            <div>
+                <div class="market-name">USDJPY</div>
+                <div class="market-price">USD / Yen</div>
+            </div>
+            <div class="signal buy">BUY</div>
+        </div>
+
+        <div class="market">
+            <div>
+                <div class="market-name">AUDUSD</div>
+                <div class="market-price">AUD / USD</div>
+            </div>
+            <div class="signal wait">WAIT</div>
+        </div>
+
+        <div class="market">
+            <div>
+                <div class="market-name">USDCAD</div>
+                <div class="market-price">USD / CAD</div>
+            </div>
+            <div class="signal sell">SELL</div>
+        </div>
+
+    </div>
+
+</section>
+
+
+<!-- MAIN CHART -->
+
+<section class="card">
+
+    <div class="chart-header">
+
+        <div>
+            <div class="symbol">XAUUSD</div>
+            <div class="price" id="price">$3,845.20</div>
+        </div>
+
+        <div class="timeframes">
+            <button class="tf">M1</button>
+            <button class="tf">M5</button>
+            <button class="tf active">M15</button>
+            <button class="tf">H1</button>
+            <button class="tf">H4</button>
+            <button class="tf">D1</button>
+        </div>
+
+    </div>
+
+
+    <div class="chart">
+
+        <svg viewBox="0 0 1000 500" preserveAspectRatio="none">
+
+            <polyline
+                points="
+                0,390
+                50,370
+                100,410
+                150,350
+                200,360
+                250,310
+                300,330
+                350,270
+                400,300
+                450,240
+                500,260
+                550,210
+                600,230
+                650,170
+                700,205
+                750,130
+                800,155
+                850,105
+                900,125
+                950,75
+                1000,100"
+                fill="none"
+                stroke="#19d879"
+                stroke-width="3"
+            />
+
+            <line
+                x1="570"
+                y1="265"
+                x2="570"
+                y2="500"
+                stroke="#0066ff"
+                stroke-dasharray="6"
+            />
+
+            <line
+                x1="570"
+                y1="335"
+                x2="1000"
+                y2="335"
+                stroke="#ff4747"
+                stroke-dasharray="6"
+            />
+
+            <line
+                x1="570"
+                y1="155"
+                x2="1000"
+                y2="155"
+                stroke="#19a866"
+                stroke-dasharray="6"
+            />
+
+        </svg>
+
+        <div class="chart-label entry">
+            ENTRY 3845.20
+        </div>
+
+        <div class="chart-label sl">
+            SL 3830.00
+        </div>
+
+        <div class="chart-label tp1">
+            TP1 3875.00
+        </div>
+
+    </div>
+
+</section>
+
+
+<!-- AI ANALYSIS -->
+
+<section class="card">
+
+    <div class="card-header">
+        TrustFX AI Analysis
+    </div>
+
+    <div class="card-body">
+
+        <div class="trade-signal">
+            <h2>BUY</h2>
+            <p>Confirmed bullish setup</p>
+        </div>
+
+        <div class="level">
+            <span>Entry</span>
+            <span>3845.20</span>
+        </div>
+
+        <div class="level">
+            <span>Stop Loss</span>
+            <span class="red">3830.00</span>
+        </div>
+
+        <div class="level">
+            <span>Take Profit</span>
+            <span class="green">3875.00</span>
+        </div>
+
+        <div class="level">
+            <span>Risk / Reward</span>
+            <span>1 : 2.0</span>
+        </div>
+
+
+        <div class="confirmation">
+
+            <div class="confirmation-title">
+                Confirmation Engine
+            </div>
+
+            <div class="confirm">
+                <span>HTF Bias</span>
+                <span class="check">✓ Bullish</span>
+            </div>
+
+            <div class="confirm">
+                <span>Liquidity Sweep</span>
+                <span class="check">✓ Confirmed</span>
+            </div>
+
+            <div class="confirm">
+                <span>Displacement</span>
+                <span class="check">✓ Confirmed</span>
+            </div>
+
+            <div class="confirm">
+                <span>Market Structure</span>
+                <span class="check">✓ BOS</span>
+            </div>
+
+            <div class="confirm">
+                <span>FVG Retest</span>
+                <span class="check">✓ Confirmed</span>
+            </div>
+
+        </div>
+
+    </div>
+
+</section>
+
+</div>
+
+
+<!-- SECOND ROW -->
+
+<div class="grid" style="margin-top:18px;">
+
+<section class="card">
+
+    <div class="card-header">
+        Market Structure
+    </div>
+
+    <div class="card-body">
+
+        <div class="analysis-row">
+            <span class="label">D1 Bias</span>
+            <span class="value green">Bullish</span>
+        </div>
+
+        <div class="analysis-row">
+            <span class="label">H4 Trend</span>
+            <span class="value green">Bullish</span>
+        </div>
+
+        <div class="analysis-row">
+            <span class="label">H1 Structure</span>
+            <span class="value green">Higher High</span>
+        </div>
+
+        <div class="analysis-row">
+            <span class="label">M15 Structure</span>
+            <span class="value green">BOS</span>
+        </div>
+
+    </div>
+
+</section>
+
+
+<section class="card">
+
+    <div class="card-header">
+        Liquidity Intelligence
+    </div>
+
+    <div class="card-body">
+
+        <div class="analysis-row">
+            <span class="label">Previous High</span>
+            <span class="value">3862.40</span>
+        </div>
+
+        <div class="analysis-row">
+            <span class="label">Previous Low</span>
+            <span class="value">3815.70</span>
+        </div>
+
+        <div class="analysis-row">
+            <span class="label">Liquidity Sweep</span>
+            <span class="value green">Detected</span>
+        </div>
+
+        <div class="analysis-row">
+            <span class="label">FVG</span>
+            <span class="value green">Detected</span>
+        </div>
+
+    </div>
+
+</section>
+
+
+<section class="card">
+
+    <div class="card-header">
+        System Status
+    </div>
+
+    <div class="card-body">
+
+        <div class="analysis-row">
+            <span class="label">Market Feed</span>
+            <span class="value green">ONLINE</span>
+        </div>
+
+        <div class="analysis-row">
+            <span class="label">Scanner</span>
+            <span class="value green">ACTIVE</span>
+        </div>
+
+        <div class="analysis-row">
+            <span class="label">AI Engine</span>
+            <span class="value green">READY</span>
+        </div>
+
+        <div class="analysis-row">
+            <span class="label">Last Scan</span>
+            <span class="value" id="scanTime">Just now</span>
+        </div>
+
+    </div>
+
+</section>
+
+</div>
+
+</main>
+
+
+<div class="footer">
+    TRUSTFX AI TRADING TERMINAL • Market intelligence platform
+</div>
+
+
+<script>
+
+function updatePrice() {
+
+    const priceElement = document.getElementById("price");
+
+    let current = parseFloat(
+        priceElement.textContent.replace("$","").replace(",","")
+    );
+
+    const movement = (Math.random() - 0.5) * 2;
+
+    current += movement;
+
+    priceElement.textContent =
+        "$" + current.toFixed(2);
+
+    document.getElementById("scanTime").textContent =
+        new Date().toLocaleTimeString();
+
+}
+
+setInterval(updatePrice, 3000);
+
+
+document.querySelectorAll(".tf").forEach(button => {
+
+    button.addEventListener("click", function() {
+
+        document.querySelectorAll(".tf")
+        .forEach(btn => btn.classList.remove("active"));
+
+        this.classList.add("active");
+
+    });
+
+});
+
+</script>
+
+</body>
+</html>
