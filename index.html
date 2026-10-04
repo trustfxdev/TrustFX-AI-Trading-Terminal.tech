@@ -269,12 +269,12 @@ button {
     padding: 20px;
     margin-bottom: 15px;
     border-radius: 10px;
-    background: rgba(25,216,121,.08);
-    border: 1px solid rgba(25,216,121,.25);
+    background: rgba(255,193,7,.08);
+    border: 1px solid rgba(255,193,7,.25);
 }
 
 .trade-signal h2 {
-    color: #19d879;
+    color: #ffc107;
     font-size: 28px;
 }
 
@@ -365,8 +365,8 @@ button {
     </div>
 
     <div class="status">
-        <div class="status-dot"></div>
-        Market Monitor Online
+        <div class="status-dot" id="statusDot"></div>
+        <span id="connectionStatus">Connecting to live market...</span>
     </div>
 
 </header>
@@ -389,15 +389,19 @@ button {
         <div class="market">
             <div>
                 <div class="market-name">XAUUSD</div>
-                <div class="market-price">Gold</div>
+                <div class="market-price" id="xauScannerPrice">
+                    Connecting...
+                </div>
             </div>
-            <div class="signal buy">BUY</div>
+            <div class="signal wait">WAIT</div>
         </div>
 
         <div class="market">
             <div>
                 <div class="market-name">EURUSD</div>
-                <div class="market-price">Euro / USD</div>
+                <div class="market-price" id="eurScannerPrice">
+                    Connecting...
+                </div>
             </div>
             <div class="signal wait">WAIT</div>
         </div>
@@ -405,23 +409,29 @@ button {
         <div class="market">
             <div>
                 <div class="market-name">GBPUSD</div>
-                <div class="market-price">Pound / USD</div>
+                <div class="market-price">
+                    Awaiting live feed
+                </div>
             </div>
-            <div class="signal sell">SELL</div>
+            <div class="signal wait">WAIT</div>
         </div>
 
         <div class="market">
             <div>
                 <div class="market-name">USDJPY</div>
-                <div class="market-price">USD / Yen</div>
+                <div class="market-price">
+                    Awaiting live feed
+                </div>
             </div>
-            <div class="signal buy">BUY</div>
+            <div class="signal wait">WAIT</div>
         </div>
 
         <div class="market">
             <div>
                 <div class="market-name">AUDUSD</div>
-                <div class="market-price">AUD / USD</div>
+                <div class="market-price">
+                    Awaiting live feed
+                </div>
             </div>
             <div class="signal wait">WAIT</div>
         </div>
@@ -429,9 +439,11 @@ button {
         <div class="market">
             <div>
                 <div class="market-name">USDCAD</div>
-                <div class="market-price">USD / CAD</div>
+                <div class="market-price">
+                    Awaiting live feed
+                </div>
             </div>
-            <div class="signal sell">SELL</div>
+            <div class="signal wait">WAIT</div>
         </div>
 
     </div>
@@ -447,7 +459,7 @@ button {
 
         <div>
             <div class="symbol">XAUUSD</div>
-            <div class="price" id="price">$3,845.20</div>
+            <div class="price" id="price">Connecting...</div>
         </div>
 
         <div class="timeframes">
@@ -523,16 +535,16 @@ button {
 
         </svg>
 
-        <div class="chart-label entry">
-            ENTRY 3845.20
+        <div class="chart-label entry" id="entryLabel">
+            LIVE PRICE
         </div>
 
         <div class="chart-label sl">
-            SL 3830.00
+            SL — ENGINE PENDING
         </div>
 
         <div class="chart-label tp1">
-            TP1 3875.00
+            TP — ENGINE PENDING
         </div>
 
     </div>
@@ -551,28 +563,28 @@ button {
     <div class="card-body">
 
         <div class="trade-signal">
-            <h2>BUY</h2>
-            <p>Confirmed bullish setup</p>
+            <h2>WAIT</h2>
+            <p>Analysis engine awaiting confirmation</p>
         </div>
 
         <div class="level">
-            <span>Entry</span>
-            <span>3845.20</span>
+            <span>Live Price</span>
+            <span id="analysisPrice">Connecting...</span>
         </div>
 
         <div class="level">
             <span>Stop Loss</span>
-            <span class="red">3830.00</span>
+            <span class="red">Pending</span>
         </div>
 
         <div class="level">
             <span>Take Profit</span>
-            <span class="green">3875.00</span>
+            <span class="green">Pending</span>
         </div>
 
         <div class="level">
             <span>Risk / Reward</span>
-            <span>1 : 2.0</span>
+            <span>Pending</span>
         </div>
 
 
@@ -584,27 +596,27 @@ button {
 
             <div class="confirm">
                 <span>HTF Bias</span>
-                <span class="check">✓ Bullish</span>
+                <span class="check">Waiting</span>
             </div>
 
             <div class="confirm">
                 <span>Liquidity Sweep</span>
-                <span class="check">✓ Confirmed</span>
+                <span class="check">Waiting</span>
             </div>
 
             <div class="confirm">
                 <span>Displacement</span>
-                <span class="check">✓ Confirmed</span>
+                <span class="check">Waiting</span>
             </div>
 
             <div class="confirm">
                 <span>Market Structure</span>
-                <span class="check">✓ BOS</span>
+                <span class="check">Waiting</span>
             </div>
 
             <div class="confirm">
                 <span>FVG Retest</span>
-                <span class="check">✓ Confirmed</span>
+                <span class="check">Waiting</span>
             </div>
 
         </div>
@@ -630,22 +642,22 @@ button {
 
         <div class="analysis-row">
             <span class="label">D1 Bias</span>
-            <span class="value green">Bullish</span>
+            <span class="value yellow">Waiting</span>
         </div>
 
         <div class="analysis-row">
             <span class="label">H4 Trend</span>
-            <span class="value green">Bullish</span>
+            <span class="value yellow">Waiting</span>
         </div>
 
         <div class="analysis-row">
             <span class="label">H1 Structure</span>
-            <span class="value green">Higher High</span>
+            <span class="value yellow">Waiting</span>
         </div>
 
         <div class="analysis-row">
             <span class="label">M15 Structure</span>
-            <span class="value green">BOS</span>
+            <span class="value yellow">Waiting</span>
         </div>
 
     </div>
@@ -663,22 +675,22 @@ button {
 
         <div class="analysis-row">
             <span class="label">Previous High</span>
-            <span class="value">3862.40</span>
+            <span class="value">Pending</span>
         </div>
 
         <div class="analysis-row">
             <span class="label">Previous Low</span>
-            <span class="value">3815.70</span>
+            <span class="value">Pending</span>
         </div>
 
         <div class="analysis-row">
             <span class="label">Liquidity Sweep</span>
-            <span class="value green">Detected</span>
+            <span class="value yellow">Waiting</span>
         </div>
 
         <div class="analysis-row">
             <span class="label">FVG</span>
-            <span class="value green">Detected</span>
+            <span class="value yellow">Waiting</span>
         </div>
 
     </div>
@@ -696,7 +708,7 @@ button {
 
         <div class="analysis-row">
             <span class="label">Market Feed</span>
-            <span class="value green">ONLINE</span>
+            <span class="value yellow" id="feedStatus">CONNECTING</span>
         </div>
 
         <div class="analysis-row">
@@ -706,12 +718,12 @@ button {
 
         <div class="analysis-row">
             <span class="label">AI Engine</span>
-            <span class="value green">READY</span>
+            <span class="value yellow">BUILDING</span>
         </div>
 
         <div class="analysis-row">
             <span class="label">Last Scan</span>
-            <span class="value" id="scanTime">Just now</span>
+            <span class="value" id="scanTime">Connecting...</span>
         </div>
 
     </div>
@@ -724,41 +736,133 @@ button {
 
 
 <div class="footer">
-    TRUSTFX AI TRADING TERMINAL • Market intelligence platform
+    TRUSTFX AI TRADING TERMINAL • Live market infrastructure
 </div>
 
 
 <script>
 
-function updatePrice() {
+/* =========================================================
+   TRUSTFX LIVE MARKET CONNECTION
+   ========================================================= */
 
-    const priceElement = document.getElementById("price");
+const API_URL =
+    "https://trustfx-ai-trading-terminal-tech.onrender.com/prices";
 
-    let current = parseFloat(
-        priceElement.textContent.replace("$","").replace(",","")
-    );
 
-    const movement = (Math.random() - 0.5) * 2;
+async function updateLiveMarket() {
 
-    current += movement;
+    try {
 
-    priceElement.textContent =
-        "$" + current.toFixed(2);
+        const response = await fetch(API_URL, {
+            cache: "no-store"
+        });
 
-    document.getElementById("scanTime").textContent =
-        new Date().toLocaleTimeString();
+        if (!response.ok) {
+            throw new Error("Backend response failed");
+        }
+
+        const data = await response.json();
+
+        const prices = data.prices || {};
+
+        /* XAU/USD */
+
+        if (prices["XAU/USD"]) {
+
+            const xau =
+                Number(prices["XAU/USD"].price);
+
+            if (Number.isFinite(xau)) {
+
+                document.getElementById("price").textContent =
+                    "$" + xau.toFixed(2);
+
+                document.getElementById("analysisPrice").textContent =
+                    xau.toFixed(2);
+
+                document.getElementById("xauScannerPrice").textContent =
+                    "$" + xau.toFixed(2);
+
+                document.getElementById("entryLabel").textContent =
+                    "LIVE " + xau.toFixed(2);
+            }
+        }
+
+
+        /* EUR/USD */
+
+        if (prices["EUR/USD"]) {
+
+            const eur =
+                Number(prices["EUR/USD"].price);
+
+            if (Number.isFinite(eur)) {
+
+                document.getElementById("eurScannerPrice").textContent =
+                    eur.toFixed(5);
+            }
+        }
+
+
+        /* CONNECTION STATUS */
+
+        document.getElementById("connectionStatus").textContent =
+            "Live Market Connected";
+
+        document.getElementById("feedStatus").textContent =
+            "ONLINE";
+
+        document.getElementById("feedStatus").className =
+            "value green";
+
+        document.getElementById("scanTime").textContent =
+            new Date().toLocaleTimeString();
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "TrustFX market connection error:",
+            error
+        );
+
+        document.getElementById("connectionStatus").textContent =
+            "Market Connection Error";
+
+        document.getElementById("feedStatus").textContent =
+            "OFFLINE";
+
+        document.getElementById("feedStatus").className =
+            "value red";
+
+        document.getElementById("scanTime").textContent =
+            "Connection error";
+    }
 
 }
 
-setInterval(updatePrice, 3000);
 
+/* Check live market every 2 seconds */
+
+updateLiveMarket();
+
+setInterval(updateLiveMarket, 2000);
+
+
+/* =========================================================
+   TIMEFRAME BUTTONS
+   ========================================================= */
 
 document.querySelectorAll(".tf").forEach(button => {
 
     button.addEventListener("click", function() {
 
         document.querySelectorAll(".tf")
-        .forEach(btn => btn.classList.remove("active"));
+            .forEach(btn =>
+                btn.classList.remove("active")
+            );
 
         this.classList.add("active");
 
