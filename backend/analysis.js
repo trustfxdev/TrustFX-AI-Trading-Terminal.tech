@@ -1,18 +1,17 @@
 // =====================================================
 // TRUSTFX INTELLIGENCE ENGINE
-// Stage 3.1
-//
-// Sequence-based confirmation engine
+// Stage 3.2
 //
 // Detects:
-// - Market structure
+// - Market Structure
 // - BOS / CHoCH
-// - Liquidity sweep
+// - Liquidity Sweep
 // - Rejection
 // - Displacement
 // - Relevant FVG
-// - Setup sequence
-// - Entry readiness
+// - Active FVG
+// - FVG Retest
+// - Entry Trigger
 // =====================================================
 
 export function analyzeMarketStructure(candles) {
@@ -157,33 +156,45 @@ export function analyzeMarketStructure(candles) {
   // STRUCTURE
   // =====================================================
 
-  const previousHigh = highs[highs.length - 2];
-  const latestHigh = highs[highs.length - 1];
+  const previousHigh =
+    highs[highs.length - 2];
 
-  const previousLow = lows[lows.length - 2];
-  const latestLow = lows[lows.length - 1];
+  const latestHigh =
+    highs[highs.length - 1];
+
+  const previousLow =
+    lows[lows.length - 2];
+
+  const latestLow =
+    lows[lows.length - 1];
 
 
   const higherHigh =
-    latestHigh.price > previousHigh.price;
+    latestHigh.price >
+    previousHigh.price;
 
   const higherLow =
-    latestLow.price > previousLow.price;
+    latestLow.price >
+    previousLow.price;
 
   const lowerHigh =
-    latestHigh.price < previousHigh.price;
+    latestHigh.price <
+    previousHigh.price;
 
   const lowerLow =
-    latestLow.price < previousLow.price;
+    latestLow.price <
+    previousLow.price;
 
 
   let trend = "NEUTRAL";
   let structure = "MIXED";
 
+
   if (higherHigh && higherLow) {
     trend = "BULLISH";
     structure = "HH + HL";
   }
+
 
   if (lowerHigh && lowerLow) {
     trend = "BEARISH";
@@ -191,7 +202,8 @@ export function analyzeMarketStructure(candles) {
   }
 
 
-  const current = data[data.length - 1];
+  const current =
+    data[data.length - 1];
 
 
   // =====================================================
@@ -199,19 +211,23 @@ export function analyzeMarketStructure(candles) {
   // =====================================================
 
   const bullishBreak =
-    current.close > latestHigh.price;
+    current.close >
+    latestHigh.price;
 
   const bearishBreak =
-    current.close < latestLow.price;
+    current.close <
+    latestLow.price;
 
 
   let bos = false;
   let bosDirection = "NONE";
 
+
   if (bullishBreak) {
     bos = true;
     bosDirection = "BULLISH";
   }
+
 
   if (bearishBreak) {
     bos = true;
@@ -222,43 +238,29 @@ export function analyzeMarketStructure(candles) {
   let choch = false;
   let chochDirection = "NONE";
 
-  if (trend === "BEARISH" && bullishBreak) {
+
+  if (
+    trend === "BEARISH" &&
+    bullishBreak
+  ) {
+
     choch = true;
     chochDirection = "BULLISH";
   }
 
-  if (trend === "BULLISH" && bearishBreak) {
+
+  if (
+    trend === "BULLISH" &&
+    bearishBreak
+  ) {
+
     choch = true;
     chochDirection = "BEARISH";
   }
 
 
   // =====================================================
-  // CURRENT CANDLE MEASUREMENTS
-  // =====================================================
-
-  const candleRange =
-    Math.max(
-      current.high - current.low,
-      0.00001
-    );
-
-  const candleBody =
-    Math.abs(
-      current.close - current.open
-    );
-
-  const upperWick =
-    current.high -
-    Math.max(current.open, current.close);
-
-  const lowerWick =
-    Math.min(current.open, current.close) -
-    current.low;
-
-
-  // =====================================================
-  // LIQUIDITY REFERENCE
+  // LIQUIDITY LEVELS
   // =====================================================
 
   const buySideLiquidity =
@@ -275,16 +277,17 @@ export function analyzeMarketStructure(candles) {
 
 
   // =====================================================
-  // FIND RECENT SWEEP
-  //
-  // We inspect the last 6 candles instead of only the
-  // current candle.
+  // RECENT SWEEP + REJECTION
   // =====================================================
 
   let recentSweep = null;
 
   const sweepStart =
-    Math.max(0, data.length - 7);
+    Math.max(
+      0,
+      data.length - 7
+    );
+
 
   for (
     let i = sweepStart;
@@ -292,48 +295,64 @@ export function analyzeMarketStructure(candles) {
     i++
   ) {
 
-    const candle = data[i];
+    const candle =
+      data[i];
 
     const range =
       Math.max(
-        candle.high - candle.low,
+        candle.high -
+        candle.low,
         0.00001
       );
 
+
     const body =
       Math.abs(
-        candle.close - candle.open
+        candle.close -
+        candle.open
       );
+
 
     const upper =
       candle.high -
-      Math.max(candle.open, candle.close);
+      Math.max(
+        candle.open,
+        candle.close
+      );
+
 
     const lower =
-      Math.min(candle.open, candle.close) -
+      Math.min(
+        candle.open,
+        candle.close
+      ) -
       candle.low;
 
 
-    // Buy-side liquidity sweep
     const highSweep =
-      candle.high > buySideLiquidity &&
-      candle.close < buySideLiquidity;
+      candle.high >
+        buySideLiquidity &&
+      candle.close <
+        buySideLiquidity;
 
 
-    // Sell-side liquidity sweep
     const lowSweep =
-      candle.low < sellSideLiquidity &&
-      candle.close > sellSideLiquidity;
+      candle.low <
+        sellSideLiquidity &&
+      candle.close >
+        sellSideLiquidity;
 
 
     const bearishRejection =
       highSweep &&
-      upper >= range * 0.30;
+      upper >=
+        range * 0.30;
 
 
     const bullishRejection =
       lowSweep &&
-      lower >= range * 0.30;
+      lower >=
+        range * 0.30;
 
 
     if (
@@ -342,8 +361,12 @@ export function analyzeMarketStructure(candles) {
     ) {
 
       recentSweep = {
+
         index: i,
-        time: candle.time,
+
+        time:
+          candle.time,
+
         direction:
           bearishRejection
             ? "BEARISH"
@@ -354,17 +377,23 @@ export function analyzeMarketStructure(candles) {
             ? "BUY-SIDE"
             : "SELL-SIDE",
 
-        rejection: true,
-
         price:
           bearishRejection
             ? candle.high
             : candle.low,
 
-        upperWick: upper,
-        lowerWick: lower,
-        candleBody: body,
-        candleRange: range
+        candleBody:
+          body,
+
+        candleRange:
+          range,
+
+        upperWick:
+          upper,
+
+        lowerWick:
+          lower
+
       };
     }
   }
@@ -415,10 +444,17 @@ export function analyzeMarketStructure(candles) {
   let liquidityStatus =
     "NO SWEEP";
 
-  if (sweep && rejection) {
+
+  if (
+    sweep &&
+    rejection
+  ) {
+
     liquidityStatus =
       "CONFIRMED SWEEP";
+
   } else if (sweep) {
+
     liquidityStatus =
       "SWEEP";
   }
@@ -426,9 +462,6 @@ export function analyzeMarketStructure(candles) {
 
   // =====================================================
   // DISPLACEMENT
-  //
-  // Compare candles with average recent body.
-  // We search AFTER the sweep.
   // =====================================================
 
   const lookback = 10;
@@ -437,7 +470,9 @@ export function analyzeMarketStructure(candles) {
     data.slice(
       Math.max(
         0,
-        data.length - lookback - 1
+        data.length -
+          lookback -
+          1
       ),
       data.length - 1
     );
@@ -449,21 +484,29 @@ export function analyzeMarketStructure(candles) {
           (sum, candle) =>
             sum +
             Math.abs(
-              candle.close - candle.open
+              candle.close -
+              candle.open
             ),
           0
         ) /
         recentCandles.length
-      : candleBody;
+      : 0;
 
 
-  const displacementMultiplier = 1.20;
+  const displacementMultiplier =
+    1.20;
 
 
   let displacement = false;
-  let displacementDirection = "NONE";
-  let displacementIndex = null;
-  let displacementTime = null;
+
+  let displacementDirection =
+    "NONE";
+
+  let displacementIndex =
+    null;
+
+  let displacementTime =
+    null;
 
 
   const displacementStart =
@@ -481,17 +524,22 @@ export function analyzeMarketStructure(candles) {
     i++
   ) {
 
-    const candle = data[i];
+    const candle =
+      data[i];
+
 
     const body =
       Math.abs(
-        candle.close - candle.open
+        candle.close -
+        candle.open
       );
 
+
     const strongBody =
+      averageBody > 0 &&
       body >=
-      averageBody *
-      displacementMultiplier;
+        averageBody *
+        displacementMultiplier;
 
 
     if (!strongBody) {
@@ -499,43 +547,47 @@ export function analyzeMarketStructure(candles) {
     }
 
 
-    // After bearish rejection we want bearish
-    // displacement.
-
     if (
       recentSweep &&
       recentSweep.direction ===
-      "BEARISH" &&
-      candle.close < candle.open
+        "BEARISH" &&
+      candle.close <
+        candle.open
     ) {
 
       displacement = true;
+
       displacementDirection =
         "BEARISH";
 
-      displacementIndex = i;
-      displacementTime = candle.time;
+      displacementIndex =
+        i;
+
+      displacementTime =
+        candle.time;
 
       break;
     }
 
 
-    // After bullish rejection we want bullish
-    // displacement.
-
     if (
       recentSweep &&
       recentSweep.direction ===
-      "BULLISH" &&
-      candle.close > candle.open
+        "BULLISH" &&
+      candle.close >
+        candle.open
     ) {
 
       displacement = true;
+
       displacementDirection =
         "BULLISH";
 
-      displacementIndex = i;
-      displacementTime = candle.time;
+      displacementIndex =
+        i;
+
+      displacementTime =
+        candle.time;
 
       break;
     }
@@ -545,6 +597,7 @@ export function analyzeMarketStructure(candles) {
   let displacementStatus =
     "NO DISPLACEMENT";
 
+
   if (displacement) {
     displacementStatus =
       "CONFIRMED";
@@ -552,9 +605,7 @@ export function analyzeMarketStructure(candles) {
 
 
   // =====================================================
-  // RELEVANT FVG
-  //
-  // Search for FVG created around/after displacement.
+  // ACTIVE FVG DETECTION
   // =====================================================
 
   let bullishFVG = false;
@@ -563,99 +614,237 @@ export function analyzeMarketStructure(candles) {
   let fvgHigh = null;
   let fvgLow = null;
 
-  let fvgDirection = "NONE";
+  let fvgDirection =
+    "NONE";
 
   let fvgIndex = null;
 
+  let fvgCreatedTime =
+    null;
 
-  const fvgStart =
+
+  /*
+    We search recent candles for the latest FVG
+    that agrees with the displacement direction.
+  */
+
+
+  const searchStart =
     displacementIndex !== null
       ? Math.max(
           2,
-          displacementIndex - 1
+          displacementIndex - 2
         )
       : Math.max(
           2,
-          data.length - 5
+          data.length - 8
         );
 
 
   for (
-    let i = fvgStart;
+    let i = searchStart;
     i < data.length;
     i++
   ) {
 
-    if (i < 2) {
-      continue;
-    }
+    const candle1 =
+      data[i - 2];
+
+    const candle3 =
+      data[i];
 
 
-    const candle1 = data[i - 2];
-    const candle3 = data[i];
-
-
-    // Bullish FVG
+    // -----------------------------------------------
+    // BULLISH FVG
+    // -----------------------------------------------
 
     if (
       candle3.low >
       candle1.high
     ) {
 
-      bullishFVG = true;
-      bearishFVG = false;
+      if (
+        displacementDirection ===
+          "BULLISH" ||
+        displacementDirection ===
+          "NONE"
+      ) {
 
-      fvgDirection =
-        "BULLISH";
+        bullishFVG = true;
+        bearishFVG = false;
 
-      fvgLow =
-        candle1.high;
+        fvgDirection =
+          "BULLISH";
 
-      fvgHigh =
-        candle3.low;
+        fvgLow =
+          candle1.high;
 
-      fvgIndex = i;
+        fvgHigh =
+          candle3.low;
+
+        fvgIndex =
+          i;
+
+        fvgCreatedTime =
+          candle3.time;
+      }
     }
 
 
-    // Bearish FVG
+    // -----------------------------------------------
+    // BEARISH FVG
+    // -----------------------------------------------
 
     if (
       candle3.high <
       candle1.low
     ) {
 
-      bearishFVG = true;
-      bullishFVG = false;
+      if (
+        displacementDirection ===
+          "BEARISH" ||
+        displacementDirection ===
+          "NONE"
+      ) {
 
-      fvgDirection =
-        "BEARISH";
+        bearishFVG = true;
+        bullishFVG = false;
 
-      fvgLow =
-        candle3.high;
+        fvgDirection =
+          "BEARISH";
 
-      fvgHigh =
-        candle1.low;
+        fvgLow =
+          candle3.high;
 
-      fvgIndex = i;
+        fvgHigh =
+          candle1.low;
+
+        fvgIndex =
+          i;
+
+        fvgCreatedTime =
+          candle3.time;
+      }
     }
   }
 
 
   let fvgStatus =
-    "NO FVG";
+    "NO ACTIVE FVG";
+
 
   if (
     bullishFVG ||
     bearishFVG
   ) {
+
     fvgStatus =
-      "RELEVANT FVG DETECTED";
+      "ACTIVE FVG";
   }
 
 
   // =====================================================
-  // SEQUENCE CONFIRMATION
+  // INVALIDATE FVG IF PRICE COMPLETELY BREAKS THROUGH
+  // =====================================================
+
+  let fvgInvalidated =
+    false;
+
+
+  if (
+    bullishFVG &&
+    current.close <
+      fvgLow
+  ) {
+
+    fvgInvalidated =
+      true;
+  }
+
+
+  if (
+    bearishFVG &&
+    current.close >
+      fvgHigh
+  ) {
+
+    fvgInvalidated =
+      true;
+  }
+
+
+  if (fvgInvalidated) {
+
+    fvgStatus =
+      "FVG INVALIDATED";
+
+    bullishFVG = false;
+    bearishFVG = false;
+
+    fvgDirection =
+      "NONE";
+  }
+
+
+  // =====================================================
+  // FVG RETEST
+  // =====================================================
+
+  let fvgRetest =
+    false;
+
+
+  let fvgPosition =
+    "AWAY";
+
+
+  if (
+    fvgDirection !==
+      "NONE" &&
+    fvgLow !== null &&
+    fvgHigh !== null
+  ) {
+
+    const touchesZone =
+      current.low <=
+        fvgHigh &&
+      current.high >=
+        fvgLow;
+
+
+    if (touchesZone) {
+
+      fvgRetest =
+        true;
+
+      fvgPosition =
+        "INSIDE FVG";
+    }
+
+
+    if (
+      current.close >
+      fvgHigh
+    ) {
+
+      fvgPosition =
+        "ABOVE FVG";
+    }
+
+
+    if (
+      current.close <
+      fvgLow
+    ) {
+
+      fvgPosition =
+        "BELOW FVG";
+    }
+  }
+
+
+  // =====================================================
+  // ENTRY TRIGGER
   // =====================================================
 
   let setupStatus =
@@ -665,43 +854,73 @@ export function analyzeMarketStructure(candles) {
     "NONE";
 
 
-  // SELL sequence
+  /*
+    SELL setup
 
-  const bearishSequence =
+    BUY-SIDE SWEEP
+          +
+    BEARISH REJECTION
+          +
+    BEARISH DISPLACEMENT
+          +
+    BEARISH BOS / CHoCH
+          +
+    BEARISH FVG
+  */
+
+
+  const bearishStructureConfirm =
+    bearishBreak ||
+    (
+      choch &&
+      chochDirection ===
+        "BEARISH"
+    ) ||
+    (
+      bos &&
+      bosDirection ===
+        "BEARISH"
+    );
+
+
+  const bearishSetup =
     bearishRejection &&
     displacement &&
     displacementDirection ===
       "BEARISH" &&
-    (
-      bearishBreak ||
-      (
-        choch &&
-        chochDirection ===
-          "BEARISH"
-      )
-    ) &&
+    bearishStructureConfirm &&
     bearishFVG;
 
 
-  // BUY sequence
+  /*
+    BUY setup
+  */
 
-  const bullishSequence =
+
+  const bullishStructureConfirm =
+    bullishBreak ||
+    (
+      choch &&
+      chochDirection ===
+        "BULLISH"
+    ) ||
+    (
+      bos &&
+      bosDirection ===
+        "BULLISH"
+    );
+
+
+  const bullishSetup =
     bullishRejection &&
     displacement &&
     displacementDirection ===
       "BULLISH" &&
-    (
-      bullishBreak ||
-      (
-        choch &&
-        chochDirection ===
-          "BULLISH"
-      )
-    ) &&
+    bullishStructureConfirm &&
     bullishFVG;
 
 
-  if (bearishSequence) {
+  if (bearishSetup) {
 
     setupStatus =
       "SELL SETUP CONFIRMED";
@@ -711,7 +930,7 @@ export function analyzeMarketStructure(candles) {
   }
 
 
-  if (bullishSequence) {
+  if (bullishSetup) {
 
     setupStatus =
       "BUY SETUP CONFIRMED";
@@ -723,87 +942,110 @@ export function analyzeMarketStructure(candles) {
 
   // =====================================================
   // ENTRY
-  //
-  // IMPORTANT:
-  // A setup is NOT automatically an entry.
-  // Price must still interact with the FVG.
   // =====================================================
 
   let entryStatus =
-    "WAITING FOR FVG RETEST";
+    "WAITING";
 
   let entryDirection =
-    setupDirection;
-
-
-  if (
-    setupDirection ===
-    "NONE"
-  ) {
-
-    entryStatus =
-      "WAITING";
-
-    entryDirection =
-      "NONE";
-  }
-
-
-  // =====================================================
-  // FVG RETEST DETECTION
-  // =====================================================
-
-  let fvgRetest = false;
-
-
-  if (
-    fvgDirection !== "NONE" &&
-    fvgLow !== null &&
-    fvgHigh !== null
-  ) {
-
-    const priceTouchesFVG =
-      current.low <= fvgHigh &&
-      current.high >= fvgLow;
-
-
-    if (priceTouchesFVG) {
-      fvgRetest = true;
-    }
-  }
-
+    "NONE";
 
   let entryConfirmed =
     false;
 
 
+  /*
+    Entry is only considered after:
+      1. Setup confirmed
+      2. Correct FVG retest
+  */
+
+
   if (
     setupDirection ===
-    "SELL" &&
-    bearishFVG &&
-    fvgRetest
+      "SELL"
   ) {
 
-    entryStatus =
-      "SELL CONFIRMED";
+    entryDirection =
+      "SELL";
 
-    entryConfirmed =
-      true;
+    if (fvgRetest) {
+
+      entryStatus =
+        "SELL CONFIRMED";
+
+      entryConfirmed =
+        true;
+
+    } else {
+
+      entryStatus =
+        "WAITING FOR FVG RETEST";
+    }
   }
 
 
   if (
     setupDirection ===
-    "BUY" &&
-    bullishFVG &&
-    fvgRetest
+      "BUY"
   ) {
 
-    entryStatus =
-      "BUY CONFIRMED";
+    entryDirection =
+      "BUY";
 
-    entryConfirmed =
-      true;
+    if (fvgRetest) {
+
+      entryStatus =
+        "BUY CONFIRMED";
+
+      entryConfirmed =
+        true;
+
+    } else {
+
+      entryStatus =
+        "WAITING FOR FVG RETEST";
+    }
+  }
+
+
+  // =====================================================
+  // CONFIRMATION SCORE
+  // =====================================================
+
+  let score =
+    0;
+
+
+  if (trend !== "NEUTRAL") {
+    score += 1;
+  }
+
+  if (sweep) {
+    score += 1;
+  }
+
+  if (rejection) {
+    score += 1;
+  }
+
+  if (displacement) {
+    score += 1;
+  }
+
+  if (bos || choch) {
+    score += 1;
+  }
+
+  if (
+    bullishFVG ||
+    bearishFVG
+  ) {
+    score += 1;
+  }
+
+  if (fvgRetest) {
+    score += 1;
   }
 
 
@@ -813,7 +1055,8 @@ export function analyzeMarketStructure(candles) {
 
   return {
 
-    status: "active",
+    status:
+      "active",
 
     trend,
 
@@ -962,8 +1205,17 @@ export function analyzeMarketStructure(candles) {
       index:
         fvgIndex,
 
+      createdTime:
+        fvgCreatedTime,
+
       retest:
-        fvgRetest
+        fvgRetest,
+
+      position:
+        fvgPosition,
+
+      invalidated:
+        fvgInvalidated
     },
 
 
@@ -995,6 +1247,17 @@ export function analyzeMarketStructure(candles) {
 
       confirmed:
         entryConfirmed
-    }
+    },
+
+
+    // =================================================
+    // SCORE
+    // =================================================
+
+    confirmationScore:
+      score,
+
+    maxConfirmationScore:
+      7
   };
 }
