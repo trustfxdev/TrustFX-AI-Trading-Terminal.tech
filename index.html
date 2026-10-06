@@ -1,12 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<meta name="viewport"
+content="width=device-width, initial-scale=1.0">
 
 <title>TrustFX AI Trading Terminal</title>
 
 <style>
+
 * {
     margin: 0;
     padding: 0;
@@ -24,6 +29,7 @@ button {
 }
 
 /* TOP BAR */
+
 .topbar {
     height: 70px;
     background: #0c111b;
@@ -77,6 +83,7 @@ button {
 }
 
 /* LAYOUT */
+
 .container {
     padding: 20px;
 }
@@ -88,6 +95,7 @@ button {
 }
 
 /* CARDS */
+
 .card {
     background: #0c111b;
     border: 1px solid #1d2635;
@@ -106,6 +114,7 @@ button {
 }
 
 /* SCANNER */
+
 .market {
     display: flex;
     justify-content: space-between;
@@ -152,6 +161,7 @@ button {
 }
 
 /* CHART */
+
 .chart-header {
     display: flex;
     justify-content: space-between;
@@ -194,9 +204,18 @@ button {
     height: 480px;
     position: relative;
     overflow: hidden;
+
     background:
-        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+        linear-gradient(
+            rgba(255,255,255,.035) 1px,
+            transparent 1px
+        ),
+        linear-gradient(
+            90deg,
+            rgba(255,255,255,.035) 1px,
+            transparent 1px
+        );
+
     background-size: 50px 50px;
 }
 
@@ -204,11 +223,6 @@ button {
     width: 100%;
     height: 100%;
     display: block;
-}
-
-.candle-grid {
-    stroke: rgba(255,255,255,.035);
-    stroke-width: 1;
 }
 
 .candle-up {
@@ -223,6 +237,11 @@ button {
 
 .candle-wick {
     stroke-width: 1.2;
+}
+
+.candle-grid {
+    stroke: rgba(255,255,255,.05);
+    stroke-width: 1;
 }
 
 .chart-empty {
@@ -257,6 +276,7 @@ button {
 }
 
 /* ANALYSIS */
+
 .analysis-row {
     display: flex;
     justify-content: space-between;
@@ -289,6 +309,7 @@ button {
 }
 
 /* TRADE PANEL */
+
 .trade-signal {
     text-align: center;
     padding: 20px;
@@ -346,6 +367,7 @@ button {
 }
 
 /* FOOTER */
+
 .footer {
     text-align: center;
     color: #526074;
@@ -354,13 +376,17 @@ button {
 }
 
 /* RESPONSIVE */
+
 @media(max-width:1100px) {
+
     .grid {
         grid-template-columns: 1fr;
     }
+
 }
 
 @media(max-width:600px) {
+
     .topbar {
         padding: 0 12px;
     }
@@ -376,30 +402,54 @@ button {
     .status {
         display: none;
     }
+
 }
+
 </style>
+
 </head>
 
+
 <body>
+
 
 <header class="topbar">
 
     <div class="logo">
-        <div class="logo-box">TF</div>
-        <h1>TRUST<span>FX</span></h1>
+
+        <div class="logo-box">
+            TF
+        </div>
+
+        <h1>
+            TRUST<span>FX</span>
+        </h1>
+
     </div>
 
+
     <div class="status">
-        <div class="status-dot" id="statusDot"></div>
-        <span id="connectionStatus">Connecting to live market...</span>
+
+        <div
+            class="status-dot"
+            id="statusDot">
+        </div>
+
+        <span id="connectionStatus">
+            Connecting to live market...
+        </span>
+
     </div>
 
 </header>
 
 
+
 <main class="container">
 
+
 <div class="grid">
+
 
 <!-- MARKET SCANNER -->
 
@@ -409,115 +459,246 @@ button {
         Market Scanner
     </div>
 
+
     <div class="card-body">
 
+
         <div class="market">
+
             <div>
-                <div class="market-name">XAUUSD</div>
-                <div class="market-price" id="xauScannerPrice">
+
+                <div class="market-name">
+                    XAUUSD
+                </div>
+
+                <div
+                    class="market-price"
+                    id="xauScannerPrice">
                     Connecting...
                 </div>
+
             </div>
-            <div class="signal wait">WAIT</div>
+
+            <div class="signal wait">
+                WAIT
+            </div>
+
         </div>
 
+
+
         <div class="market">
+
             <div>
-                <div class="market-name">EURUSD</div>
-                <div class="market-price" id="eurScannerPrice">
+
+                <div class="market-name">
+                    EURUSD
+                </div>
+
+                <div
+                    class="market-price"
+                    id="eurScannerPrice">
                     Connecting...
                 </div>
+
             </div>
-            <div class="signal wait">WAIT</div>
+
+            <div class="signal wait">
+                WAIT
+            </div>
+
         </div>
 
+
+
         <div class="market">
+
             <div>
-                <div class="market-name">GBPUSD</div>
+
+                <div class="market-name">
+                    GBPUSD
+                </div>
+
                 <div class="market-price">
                     Awaiting live feed
                 </div>
+
             </div>
-            <div class="signal wait">WAIT</div>
+
+            <div class="signal wait">
+                WAIT
+            </div>
+
         </div>
 
+
+
         <div class="market">
+
             <div>
-                <div class="market-name">USDJPY</div>
+
+                <div class="market-name">
+                    USDJPY
+                </div>
+
                 <div class="market-price">
                     Awaiting live feed
                 </div>
+
             </div>
-            <div class="signal wait">WAIT</div>
+
+            <div class="signal wait">
+                WAIT
+            </div>
+
         </div>
 
+
+
         <div class="market">
+
             <div>
-                <div class="market-name">AUDUSD</div>
+
+                <div class="market-name">
+                    AUDUSD
+                </div>
+
                 <div class="market-price">
                     Awaiting live feed
                 </div>
+
             </div>
-            <div class="signal wait">WAIT</div>
+
+            <div class="signal wait">
+                WAIT
+            </div>
+
         </div>
 
+
+
         <div class="market">
+
             <div>
-                <div class="market-name">USDCAD</div>
+
+                <div class="market-name">
+                    USDCAD
+                </div>
+
                 <div class="market-price">
                     Awaiting live feed
                 </div>
+
             </div>
-            <div class="signal wait">WAIT</div>
+
+            <div class="signal wait">
+                WAIT
+            </div>
+
         </div>
+
 
     </div>
 
 </section>
+
 
 
 <!-- MAIN CHART -->
 
 <section class="card">
 
+
     <div class="chart-header">
 
         <div>
-            <div class="symbol">XAUUSD</div>
-            <div class="price" id="price">Connecting...</div>
+
+            <div class="symbol">
+                XAUUSD
+            </div>
+
+            <div
+                class="price"
+                id="price">
+                Connecting...
+            </div>
+
         </div>
 
+
         <div class="timeframes">
-            <button class="tf">M1</button>
-            <button class="tf">M5</button>
-            <button class="tf active">M15</button>
-            <button class="tf">H1</button>
-            <button class="tf">H4</button>
-            <button class="tf">D1</button>
+
+            <button class="tf">
+                M1
+            </button>
+
+            <button class="tf">
+                M5
+            </button>
+
+            <button class="tf active">
+                M15
+            </button>
+
+            <button class="tf">
+                H1
+            </button>
+
+            <button class="tf">
+                H4
+            </button>
+
+            <button class="tf">
+                D1
+            </button>
+
         </div>
 
     </div>
+
 
 
     <div class="chart">
 
-        <svg id="candleChart" viewBox="0 0 1000 500" preserveAspectRatio="none" aria-label="TrustFX live candlestick chart"></svg>
+        <svg
+            id="candleChart"
+            viewBox="0 0 1000 500"
+            preserveAspectRatio="none">
 
-        <div class="chart-label entry" id="entryLabel">
+        </svg>
+
+
+        <div
+            class="chart-label entry"
+            id="entryLabel">
+
             LIVE PRICE
+
         </div>
 
-        <div class="chart-label sl" id="slLabel">
+
+        <div
+            class="chart-label sl"
+            id="slLabel">
+
             SL — ENGINE PENDING
+
         </div>
 
-        <div class="chart-label tp1" id="tpLabel">
+
+        <div
+            class="chart-label tp1"
+            id="tpLabel">
+
             TP — ENGINE PENDING
+
         </div>
 
     </div>
 
+
 </section>
+
 
 
 <!-- AI ANALYSIS -->
@@ -528,31 +709,72 @@ button {
         TrustFX AI Analysis
     </div>
 
+
     <div class="card-body">
 
+
         <div class="trade-signal">
-            <h2>WAIT</h2>
-            <p>Analysis engine awaiting confirmation</p>
+
+            <h2>
+                WAIT
+            </h2>
+
+            <p>
+                Analysis engine awaiting confirmation
+            </p>
+
         </div>
 
-        <div class="level">
-            <span>Live Price</span>
-            <span id="analysisPrice">Connecting...</span>
-        </div>
 
         <div class="level">
-            <span>Stop Loss</span>
-            <span class="red">Pending</span>
+
+            <span>
+                Live Price
+            </span>
+
+            <span id="analysisPrice">
+                Connecting...
+            </span>
+
         </div>
 
-        <div class="level">
-            <span>Take Profit</span>
-            <span class="green">Pending</span>
-        </div>
 
         <div class="level">
-            <span>Risk / Reward</span>
-            <span>Pending</span>
+
+            <span>
+                Stop Loss
+            </span>
+
+            <span class="red">
+                Pending
+            </span>
+
+        </div>
+
+
+        <div class="level">
+
+            <span>
+                Take Profit
+            </span>
+
+            <span class="green">
+                Pending
+            </span>
+
+        </div>
+
+
+        <div class="level">
+
+            <span>
+                Risk / Reward
+            </span>
+
+            <span>
+                Pending
+            </span>
+
         </div>
 
 
@@ -562,43 +784,89 @@ button {
                 Confirmation Engine
             </div>
 
-            <div class="confirm">
-                <span>HTF Bias</span>
-                <span class="check">Waiting</span>
-            </div>
 
             <div class="confirm">
-                <span>Liquidity Sweep</span>
-                <span class="check">Waiting</span>
+
+                <span>
+                    HTF Bias
+                </span>
+
+                <span class="check">
+                    Waiting
+                </span>
+
             </div>
 
-            <div class="confirm">
-                <span>Displacement</span>
-                <span class="check">Waiting</span>
-            </div>
 
             <div class="confirm">
-                <span>Market Structure</span>
-                <span class="check">Waiting</span>
+
+                <span>
+                    Liquidity Sweep
+                </span>
+
+                <span class="check">
+                    Waiting
+                </span>
+
             </div>
 
+
             <div class="confirm">
-                <span>FVG Retest</span>
-                <span class="check">Waiting</span>
+
+                <span>
+                    Displacement
+                </span>
+
+                <span class="check">
+                    Waiting
+                </span>
+
+            </div>
+
+
+            <div class="confirm">
+
+                <span>
+                    Market Structure
+                </span>
+
+                <span class="check">
+                    Waiting
+                </span>
+
+            </div>
+
+
+            <div class="confirm">
+
+                <span>
+                    FVG Retest
+                </span>
+
+                <span class="check">
+                    Waiting
+                </span>
+
             </div>
 
         </div>
+
 
     </div>
 
 </section>
 
+
 </div>
+
 
 
 <!-- SECOND ROW -->
 
-<div class="grid" style="margin-top:18px;">
+<div
+    class="grid"
+    style="margin-top:18px;">
+
 
 <section class="card">
 
@@ -606,31 +874,66 @@ button {
         Market Structure
     </div>
 
+
     <div class="card-body">
 
-        <div class="analysis-row">
-            <span class="label">D1 Bias</span>
-            <span class="value yellow">Waiting</span>
-        </div>
 
         <div class="analysis-row">
-            <span class="label">H4 Trend</span>
-            <span class="value yellow">Waiting</span>
+
+            <span class="label">
+                D1 Bias
+            </span>
+
+            <span class="value yellow">
+                Waiting
+            </span>
+
         </div>
 
-        <div class="analysis-row">
-            <span class="label">H1 Structure</span>
-            <span class="value yellow">Waiting</span>
-        </div>
 
         <div class="analysis-row">
-            <span class="label">M15 Structure</span>
-            <span class="value yellow">Waiting</span>
+
+            <span class="label">
+                H4 Trend
+            </span>
+
+            <span class="value yellow">
+                Waiting
+            </span>
+
         </div>
+
+
+        <div class="analysis-row">
+
+            <span class="label">
+                H1 Structure
+            </span>
+
+            <span class="value yellow">
+                Waiting
+            </span>
+
+        </div>
+
+
+        <div class="analysis-row">
+
+            <span class="label">
+                M15 Structure
+            </span>
+
+            <span class="value yellow">
+                Waiting
+            </span>
+
+        </div>
+
 
     </div>
 
 </section>
+
 
 
 <section class="card">
@@ -639,31 +942,66 @@ button {
         Liquidity Intelligence
     </div>
 
+
     <div class="card-body">
 
-        <div class="analysis-row">
-            <span class="label">Previous High</span>
-            <span class="value">Pending</span>
-        </div>
 
         <div class="analysis-row">
-            <span class="label">Previous Low</span>
-            <span class="value">Pending</span>
+
+            <span class="label">
+                Previous High
+            </span>
+
+            <span class="value">
+                Pending
+            </span>
+
         </div>
 
-        <div class="analysis-row">
-            <span class="label">Liquidity Sweep</span>
-            <span class="value yellow">Waiting</span>
-        </div>
 
         <div class="analysis-row">
-            <span class="label">FVG</span>
-            <span class="value yellow">Waiting</span>
+
+            <span class="label">
+                Previous Low
+            </span>
+
+            <span class="value">
+                Pending
+            </span>
+
         </div>
+
+
+        <div class="analysis-row">
+
+            <span class="label">
+                Liquidity Sweep
+            </span>
+
+            <span class="value yellow">
+                Waiting
+            </span>
+
+        </div>
+
+
+        <div class="analysis-row">
+
+            <span class="label">
+                FVG
+            </span>
+
+            <span class="value yellow">
+                Waiting
+            </span>
+
+        </div>
+
 
     </div>
 
 </section>
+
 
 
 <section class="card">
@@ -672,43 +1010,1222 @@ button {
         System Status
     </div>
 
+
     <div class="card-body">
 
-        <div class="analysis-row">
-            <span class="label">Market Feed</span>
-            <span class="value yellow" id="feedStatus">CONNECTING</span>
-        </div>
 
         <div class="analysis-row">
-            <span class="label">Scanner</span>
-            <span class="value green">ACTIVE</span>
+
+            <span class="label">
+                Market Feed
+            </span>
+
+            <span
+                class="value yellow"
+                id="feedStatus">
+                CONNECTING
+            </span>
+
         </div>
 
-        <div class="analysis-row">
-            <span class="label">AI Engine</span>
-            <span class="value yellow">BUILDING</span>
-        </div>
 
         <div class="analysis-row">
-            <span class="label">Last Scan</span>
-            <span class="value" id="scanTime">Connecting...</span>
+
+            <span class="label">
+                Scanner
+            </span>
+
+            <span class="value green">
+                ACTIVE
+            </span>
+
         </div>
+
+
+        <div class="analysis-row">
+
+            <span class="label">
+                AI Engine
+            </span>
+
+            <span class="value yellow">
+                BUILDING
+            </span>
+
+        </div>
+
+
+        <div class="analysis-row">
+
+            <span class="label">
+                Last Scan
+            </span>
+
+            <span
+                class="value"
+                id="scanTime">
+                Connecting...
+            </span>
+
+        </div>
+
 
     </div>
 
 </section>
 
+
 </div>
+
 
 </main>
 
 
+
 <div class="footer">
-    TRUSTFX AI TRADING TERMINAL • Live market infrastructure
+
+    TRUSTFX AI TRADING TERMINAL
+    • Live market infrastructure
+
 </div>
 
 
-<script>\n\nconst API_BASE = "https://trustfx-ai-trading-terminal-tech.onrender.com";\nconst PRICE_API = `${API_BASE}/prices`;\nconst CANDLE_API = `${API_BASE}/candles/XAUUSD`;\nlet currentInterval = "15min";\n\nconst timeframeMap = {\n    M1: "1min",\n    M5: "5min",\n    M15: "15min",\n    H1: "1h",\n    H4: "4h",\n    D1: "1day"\n};\n\nfunction xauFormat(value) {\n    return Number(value).toFixed(2);\n}\n\nasync function updateLiveMarket() {\n    try {\n        const response = await fetch(PRICE_API, { cache: "no-store" });\n        if (!response.ok) throw new Error("Backend response failed");\n        const data = await response.json();\n        const prices = data.prices || {};\n\n        if (prices["XAU/USD"]) {\n            const xau = Number(prices["XAU/USD"].price);\n            if (Number.isFinite(xau)) {\n                document.getElementById("price").textContent = "$" + xauFormat(xau);\n                document.getElementById("analysisPrice").textContent = xauFormat(xau);\n                document.getElementById("xauScannerPrice").textContent = "$" + xauFormat(xau);\n                document.getElementById("entryLabel").textContent = "LIVE " + xauFormat(xau);\n            }\n        }\n\n        if (prices["EUR/USD"]) {\n            const eur = Number(prices["EUR/USD"].price);\n            if (Number.isFinite(eur)) document.getElementById("eurScannerPrice").textContent = eur.toFixed(5);\n        }\n\n        document.getElementById("connectionStatus").textContent = "Live Market Connected";\n        document.getElementById("feedStatus").textContent = "ONLINE";\n        document.getElementById("feedStatus").className = "value green";\n        document.getElementById("scanTime").textContent = new Date().toLocaleTimeString();\n    } catch (error) {\n        console.error("TrustFX market connection error:", error);\n        document.getElementById("connectionStatus").textContent = "Market Connection Error";\n        document.getElementById("feedStatus").textContent = "OFFLINE";\n        document.getElementById("feedStatus").className = "value red";\n        document.getElementById("scanTime").textContent = "Connection error";\n    }\n}\n\nasync function loadCandles(interval = currentInterval) {\n    currentInterval = interval;\n    const chart = document.getElementById("candleChart");\n    chart.innerHTML = `<text x="500" y="250" text-anchor="middle" class="chart-empty">Loading ${interval} candles...</text>`;\n\n    try {\n        const response = await fetch(`${CANDLE_API}?interval=${encodeURIComponent(interval)}&outputsize=100`, { cache: "no-store" });\n        if (!response.ok) throw new Error(`Candle request failed: ${response.status}`);\n        const data = await response.json();\n        if (data.status !== "online" || !Array.isArray(data.candles) || !data.candles.length) {\n            throw new Error(data.message || "No candle data received.");\n        }\n        renderCandles(data.candles);\n    } catch (error) {\n        console.error("TrustFX candle error:", error);\n        chart.innerHTML = `<text x="500" y="235" text-anchor="middle" class="chart-empty">Candle data unavailable</text><text x="500" y="270" text-anchor="middle" class="chart-empty" style="font-size:13px;">${String(error.message).replace(/[&<>]/g, "")}</text>`;\n    }\n}\n\nfunction svgEl(name, attrs) {\n    const el = document.createElementNS("http://www.w3.org/2000/svg", name);\n    Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));\n    return el;\n}\n\nfunction renderCandles(raw) {\n    const chart = document.getElementById("candleChart");\n    chart.innerHTML = "";\n\n    const candles = [...raw].reverse().map(c => ({\n        open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close)\n    })).filter(c => [c.open,c.high,c.low,c.close].every(Number.isFinite));\n\n    const visible = candles.slice(-70);\n    if (!visible.length) {\n        chart.innerHTML = '<text x="500" y="250" text-anchor="middle" class="chart-empty">No valid candle data</text>';\n        return;\n    }\n\n    const W=1000,H=500,pad={top:25,right:25,bottom:30,left:20};\n    const pw=W-pad.left-pad.right, ph=H-pad.top-pad.bottom;\n    let min=Math.min(...visible.map(c=>c.low)), max=Math.max(...visible.map(c=>c.high));\n    let range=max-min; if (!range || !Number.isFinite(range)) range=1;\n    min-=range*.08; max+=range*.08; range=max-min;\n    const y=p=>pad.top+((max-p)/range)*ph;\n\n    const grid=svgEl("g", {class:"candle-grid"});\n    for(let i=1;i<8;i++){ const x=pad.left+(pw/8)*i; grid.appendChild(svgEl("line",{x1:x,y1:pad.top,x2:x,y2:H-pad.bottom})); }\n    for(let i=1;i<7;i++){ const yy=pad.top+(ph/7)*i; grid.appendChild(svgEl("line",{x1:pad.left,y1:yy,x2:W-pad.right,y2:yy})); }\n    chart.appendChild(grid);\n\n    const slot=pw/visible.length;\n    const bodyWidth=Math.max(3,Math.min(10,slot*.62));\n\n    visible.forEach((c,i)=>{\n        const x=pad.left+slot*i+slot/2;\n        const bullish=c.close>=c.open;\n        const cls=bullish?"candle-up":"candle-down";\n        chart.appendChild(svgEl("line",{x1:x,y1:y(c.high),x2:x,y2:y(c.low),class:`candle-wick ${cls}`}));\n        const top=Math.min(y(c.open),y(c.close));\n        const height=Math.max(1.5,Math.abs(y(c.close)-y(c.open)));\n        chart.appendChild(svgEl("rect",{x:x-bodyWidth/2,y:top,width:bodyWidth,height:height,class:cls,rx:1}));\n    });\n\n    const latest=visible[visible.length-1];\n    const latestY=y(latest.close);\n    chart.appendChild(svgEl("line",{x1:pad.left,y1:latestY,x2:W-pad.right,y2:latestY,stroke:"#0066ff","stroke-dasharray":"5 5","stroke-width":"1"}));\n    const label=svgEl("text",{x:W-pad.right,y:Math.max(18,Math.min(H-8,latestY-6)),"text-anchor":"end",fill:"#ffffff","font-size":"12","font-weight":"bold"});\n    label.textContent=xauFormat(latest.close); chart.appendChild(label);\n\n    document.getElementById("price").textContent="$"+xauFormat(latest.close);\n    document.getElementById("analysisPrice").textContent=xauFormat(latest.close);\n    document.getElementById("xauScannerPrice").textContent="$"+xauFormat(latest.close);\n    document.getElementById("entryLabel").textContent="LIVE "+xauFormat(latest.close);\n}\n\ndocument.querySelectorAll(".tf").forEach(button=>{\n    button.addEventListener("click",()=>{\n        document.querySelectorAll(".tf").forEach(btn=>btn.classList.remove("active"));\n        button.classList.add("active");\n        const interval=timeframeMap[button.textContent.trim()];\n        if(interval) loadCandles(interval);\n    });\n});\n\nupdateLiveMarket();\nloadCandles("15min");\nsetInterval(updateLiveMarket,2000);\nsetInterval(()=>loadCandles(currentInterval),60000);\n\n</script>
+
+<script>
+
+
+/* =========================================================
+   TRUSTFX LIVE MARKET CONFIGURATION
+   ========================================================= */
+
+const API_BASE =
+    "https://trustfx-ai-trading-terminal-tech.onrender.com";
+
+const PRICE_API =
+    API_BASE + "/prices";
+
+const CANDLE_API =
+    API_BASE + "/candles/XAUUSD";
+
+
+let currentInterval = "15min";
+
+let currentCandles = [];
+
+
+
+/* =========================================================
+   TIMEFRAME MAP
+   ========================================================= */
+
+const timeframeMap = {
+
+    M1: "1min",
+
+    M5: "5min",
+
+    M15: "15min",
+
+    H1: "1h",
+
+    H4: "4h",
+
+    D1: "1day"
+
+};
+
+
+
+/* =========================================================
+   FORMAT PRICE
+   ========================================================= */
+
+function formatXAU(price) {
+
+    return Number(price).toFixed(2);
+
+}
+
+
+
+/* =========================================================
+   LIVE MARKET PRICE
+   ========================================================= */
+
+async function updateLiveMarket() {
+
+    try {
+
+        const response =
+            await fetch(
+                PRICE_API,
+                {
+                    cache: "no-store"
+                }
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                "Backend response failed"
+            );
+
+        }
+
+
+        const data =
+            await response.json();
+
+
+        const prices =
+            data.prices || {};
+
+
+        /* XAU/USD */
+
+        if (prices["XAU/USD"]) {
+
+            const xau =
+                Number(
+                    prices["XAU/USD"].price
+                );
+
+
+            if (Number.isFinite(xau)) {
+
+                document.getElementById(
+                    "price"
+                ).textContent =
+                    "$" + formatXAU(xau);
+
+
+                document.getElementById(
+                    "analysisPrice"
+                ).textContent =
+                    formatXAU(xau);
+
+
+                document.getElementById(
+                    "xauScannerPrice"
+                ).textContent =
+                    "$" + formatXAU(xau);
+
+
+                document.getElementById(
+                    "entryLabel"
+                ).textContent =
+                    "LIVE " + formatXAU(xau);
+
+            }
+
+        }
+
+
+        /* EUR/USD */
+
+        if (prices["EUR/USD"]) {
+
+            const eur =
+                Number(
+                    prices["EUR/USD"].price
+                );
+
+
+            if (Number.isFinite(eur)) {
+
+                document.getElementById(
+                    "eurScannerPrice"
+                ).textContent =
+                    eur.toFixed(5);
+
+            }
+
+        }
+
+
+        /* CONNECTION */
+
+        document.getElementById(
+            "connectionStatus"
+        ).textContent =
+            "Live Market Connected";
+
+
+        document.getElementById(
+            "feedStatus"
+        ).textContent =
+            "ONLINE";
+
+
+        document.getElementById(
+            "feedStatus"
+        ).className =
+            "value green";
+
+
+        document.getElementById(
+            "scanTime"
+        ).textContent =
+            new Date().toLocaleTimeString();
+
+
+    }
+
+    catch(error) {
+
+        console.error(
+            "TrustFX market error:",
+            error
+        );
+
+
+        document.getElementById(
+            "connectionStatus"
+        ).textContent =
+            "Market Connection Error";
+
+
+        document.getElementById(
+            "feedStatus"
+        ).textContent =
+            "OFFLINE";
+
+
+        document.getElementById(
+            "feedStatus"
+        ).className =
+            "value red";
+
+
+        document.getElementById(
+            "scanTime"
+        ).textContent =
+            "Connection error";
+
+    }
+
+}
+
+
+
+/* =========================================================
+   LOAD REAL CANDLES
+   ========================================================= */
+
+async function loadCandles(interval) {
+
+    currentInterval =
+        interval || currentInterval;
+
+
+    const chart =
+        document.getElementById(
+            "candleChart"
+        );
+
+
+    chart.innerHTML = `
+
+        <text
+            x="500"
+            y="250"
+            text-anchor="middle"
+            class="chart-empty">
+
+            Loading ${currentInterval} candles...
+
+        </text>
+
+    `;
+
+
+    try {
+
+        const url =
+            CANDLE_API +
+            "?interval=" +
+            encodeURIComponent(
+                currentInterval
+            ) +
+            "&outputsize=100";
+
+
+        const response =
+            await fetch(
+                url,
+                {
+                    cache: "no-store"
+                }
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                "Candle request failed: " +
+                response.status
+            );
+
+        }
+
+
+        const data =
+            await response.json();
+
+
+        if (
+            data.status !== "online" ||
+            !Array.isArray(data.candles) ||
+            data.candles.length === 0
+        ) {
+
+            throw new Error(
+                data.message ||
+                "No candle data received."
+            );
+
+        }
+
+
+        currentCandles =
+            data.candles;
+
+
+        renderCandlesticks(
+            currentCandles
+        );
+
+
+    }
+
+    catch(error) {
+
+        console.error(
+            "TrustFX candle error:",
+            error
+        );
+
+
+        chart.innerHTML = `
+
+            <text
+                x="500"
+                y="235"
+                text-anchor="middle"
+                class="chart-empty">
+
+                Candle data unavailable
+
+            </text>
+
+
+            <text
+                x="500"
+                y="270"
+                text-anchor="middle"
+                class="chart-empty"
+                style="font-size:13px;">
+
+                ${escapeSvg(
+                    error.message
+                )}
+
+            </text>
+
+        `;
+
+    }
+
+}
+
+
+
+/* =========================================================
+   ESCAPE SVG
+   ========================================================= */
+
+function escapeSvg(value) {
+
+    return String(value)
+
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+
+        .replace(
+            /</g,
+            "&lt;"
+        )
+
+        .replace(
+            />/g,
+            "&gt;"
+        )
+
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+
+        .replace(
+            /'/g,
+            "&apos;"
+        );
+
+}
+
+
+
+/* =========================================================
+   RENDER CANDLESTICKS
+   ========================================================= */
+
+function renderCandlesticks(
+    rawCandles
+) {
+
+    const chart =
+        document.getElementById(
+            "candleChart"
+        );
+
+
+    chart.innerHTML = "";
+
+
+    /*
+    Twelve Data gives newest candle first.
+    Reverse it so oldest is on the left.
+    */
+
+    const candles =
+        [...rawCandles]
+        .reverse()
+        .map(
+            candle => ({
+
+                datetime:
+                    candle.datetime,
+
+                open:
+                    Number(candle.open),
+
+                high:
+                    Number(candle.high),
+
+                low:
+                    Number(candle.low),
+
+                close:
+                    Number(candle.close)
+
+            })
+        )
+        .filter(
+            candle =>
+                Number.isFinite(
+                    candle.open
+                ) &&
+                Number.isFinite(
+                    candle.high
+                ) &&
+                Number.isFinite(
+                    candle.low
+                ) &&
+                Number.isFinite(
+                    candle.close
+                )
+        );
+
+
+    if (!candles.length) {
+
+        chart.innerHTML = `
+
+            <text
+                x="500"
+                y="250"
+                text-anchor="middle"
+                class="chart-empty">
+
+                No valid candle data
+
+            </text>
+
+        `;
+
+        return;
+
+    }
+
+
+    /*
+    Show the newest 70 candles.
+    */
+
+    const visible =
+        candles.slice(-70);
+
+
+    const width = 1000;
+
+    const height = 500;
+
+
+    const padding = {
+
+        top: 25,
+
+        right: 25,
+
+        bottom: 30,
+
+        left: 20
+
+    };
+
+
+    const plotWidth =
+        width -
+        padding.left -
+        padding.right;
+
+
+    const plotHeight =
+        height -
+        padding.top -
+        padding.bottom;
+
+
+    let minPrice =
+        Math.min(
+            ...visible.map(
+                candle => candle.low
+            )
+        );
+
+
+    let maxPrice =
+        Math.max(
+            ...visible.map(
+                candle => candle.high
+            )
+        );
+
+
+    let range =
+        maxPrice -
+        minPrice;
+
+
+    if (
+        !Number.isFinite(range) ||
+        range <= 0
+    ) {
+
+        range =
+            Math.max(
+                maxPrice * 0.001,
+                1
+            );
+
+    }
+
+
+    const margin =
+        range * 0.08;
+
+
+    minPrice -= margin;
+
+    maxPrice += margin;
+
+
+    range =
+        maxPrice -
+        minPrice;
+
+
+
+    function y(price) {
+
+        return (
+
+            padding.top +
+
+            (
+                (maxPrice - price) /
+                range
+            ) *
+
+            plotHeight
+
+        );
+
+    }
+
+
+
+    /* GRID */
+
+    const grid =
+        document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "g"
+        );
+
+
+    grid.setAttribute(
+        "class",
+        "candle-grid"
+    );
+
+
+    for (
+        let i = 1;
+        i < 8;
+        i++
+    ) {
+
+        const line =
+            document.createElementNS(
+                "http://www.w3.org/2000/svg",
+                "line"
+            );
+
+
+        const x =
+            padding.left +
+            (
+                plotWidth / 8
+            ) * i;
+
+
+        line.setAttribute(
+            "x1",
+            x
+        );
+
+
+        line.setAttribute(
+            "y1",
+            padding.top
+        );
+
+
+        line.setAttribute(
+            "x2",
+            x
+        );
+
+
+        line.setAttribute(
+            "y2",
+            height -
+            padding.bottom
+        );
+
+
+        grid.appendChild(line);
+
+    }
+
+
+
+    for (
+        let i = 1;
+        i < 7;
+        i++
+    ) {
+
+        const line =
+            document.createElementNS(
+                "http://www.w3.org/2000/svg",
+                "line"
+            );
+
+
+        const yy =
+            padding.top +
+            (
+                plotHeight / 7
+            ) * i;
+
+
+        line.setAttribute(
+            "x1",
+            padding.left
+        );
+
+
+        line.setAttribute(
+            "y1",
+            yy
+        );
+
+
+        line.setAttribute(
+            "x2",
+            width -
+            padding.right
+        );
+
+
+        line.setAttribute(
+            "y2",
+            yy
+        );
+
+
+        grid.appendChild(line);
+
+    }
+
+
+    chart.appendChild(grid);
+
+
+
+    /* CANDLE WIDTH */
+
+    const slot =
+        plotWidth /
+        visible.length;
+
+
+    const bodyWidth =
+        Math.max(
+            3,
+            Math.min(
+                10,
+                slot * 0.62
+            )
+        );
+
+
+
+    /* DRAW CANDLES */
+
+    visible.forEach(
+        (candle, index) => {
+
+            const x =
+                padding.left +
+                slot * index +
+                slot / 2;
+
+
+            const highY =
+                y(candle.high);
+
+
+            const lowY =
+                y(candle.low);
+
+
+            const openY =
+                y(candle.open);
+
+
+            const closeY =
+                y(candle.close);
+
+
+            const bullish =
+                candle.close >=
+                candle.open;
+
+
+            const className =
+                bullish
+                    ? "candle-up"
+                    : "candle-down";
+
+
+
+            /* WICK */
+
+            const wick =
+                document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "line"
+                );
+
+
+            wick.setAttribute(
+                "x1",
+                x
+            );
+
+
+            wick.setAttribute(
+                "y1",
+                highY
+            );
+
+
+            wick.setAttribute(
+                "x2",
+                x
+            );
+
+
+            wick.setAttribute(
+                "y2",
+                lowY
+            );
+
+
+            wick.setAttribute(
+                "class",
+                "candle-wick " +
+                className
+            );
+
+
+            chart.appendChild(
+                wick
+            );
+
+
+
+            /* BODY */
+
+            const body =
+                document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "rect"
+                );
+
+
+            const bodyTop =
+                Math.min(
+                    openY,
+                    closeY
+                );
+
+
+            const bodyHeight =
+                Math.max(
+                    1.5,
+                    Math.abs(
+                        closeY -
+                        openY
+                    )
+                );
+
+
+            body.setAttribute(
+                "x",
+                x -
+                bodyWidth / 2
+            );
+
+
+            body.setAttribute(
+                "y",
+                bodyTop
+            );
+
+
+            body.setAttribute(
+                "width",
+                bodyWidth
+            );
+
+
+            body.setAttribute(
+                "height",
+                bodyHeight
+            );
+
+
+            body.setAttribute(
+                "class",
+                className
+            );
+
+
+            body.setAttribute(
+                "rx",
+                "1"
+            );
+
+
+            chart.appendChild(
+                body
+            );
+
+        }
+    );
+
+
+
+    /* CURRENT PRICE LINE */
+
+    const latest =
+        visible[
+            visible.length - 1
+        ];
+
+
+    const latestPrice =
+        latest.close;
+
+
+    const latestY =
+        y(latestPrice);
+
+
+    const priceLine =
+        document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "line"
+        );
+
+
+    priceLine.setAttribute(
+        "x1",
+        padding.left
+    );
+
+
+    priceLine.setAttribute(
+        "y1",
+        latestY
+    );
+
+
+    priceLine.setAttribute(
+        "x2",
+        width -
+        padding.right
+    );
+
+
+    priceLine.setAttribute(
+        "y2",
+        latestY
+    );
+
+
+    priceLine.setAttribute(
+        "stroke",
+        "#0066ff"
+    );
+
+
+    priceLine.setAttribute(
+        "stroke-dasharray",
+        "5 5"
+    );
+
+
+    chart.appendChild(
+        priceLine
+    );
+
+
+
+    /* PRICE TEXT */
+
+    const priceText =
+        document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "text"
+        );
+
+
+    priceText.setAttribute(
+        "x",
+        width -
+        padding.right
+    );
+
+
+    priceText.setAttribute(
+        "y",
+        Math.max(
+            18,
+            Math.min(
+                height - 8,
+                latestY - 6
+            )
+        )
+    );
+
+
+    priceText.setAttribute(
+        "text-anchor",
+        "end"
+    );
+
+
+    priceText.setAttribute(
+        "fill",
+        "#ffffff"
+    );
+
+
+    priceText.setAttribute(
+        "font-size",
+        "12"
+    );
+
+
+    priceText.setAttribute(
+        "font-weight",
+        "bold"
+    );
+
+
+    priceText.textContent =
+        formatXAU(
+            latestPrice
+        );
+
+
+    chart.appendChild(
+        priceText
+    );
+
+
+
+    /* UPDATE DISPLAY */
+
+    document.getElementById(
+        "price"
+    ).textContent =
+        "$" +
+        formatXAU(
+            latestPrice
+        );
+
+
+    document.getElementById(
+        "analysisPrice"
+    ).textContent =
+        formatXAU(
+            latestPrice
+        );
+
+
+    document.getElementById(
+        "xauScannerPrice"
+    ).textContent =
+        "$" +
+        formatXAU(
+            latestPrice
+        );
+
+
+    document.getElementById(
+        "entryLabel"
+    ).textContent =
+        "LIVE " +
+        formatXAU(
+            latestPrice
+        );
+
+}
+
+
+
+/* =========================================================
+   TIMEFRAME BUTTONS
+   ========================================================= */
+
+document
+    .querySelectorAll(".tf")
+    .forEach(
+        button => {
+
+            button.addEventListener(
+                "click",
+                function() {
+
+                    document
+                        .querySelectorAll(
+                            ".tf"
+                        )
+                        .forEach(
+                            btn =>
+                                btn.classList
+                                    .remove(
+                                        "active"
+                                    )
+                        );
+
+
+                    this.classList.add(
+                        "active"
+                    );
+
+
+                    const label =
+                        this.textContent.trim();
+
+
+                    const interval =
+                        timeframeMap[
+                            label
+                        ];
+
+
+                    if (interval) {
+
+                        loadCandles(
+                            interval
+                        );
+
+                    }
+
+                }
+            );
+
+        }
+    );
+
+
+
+/* =========================================================
+   START TRUSTFX
+   ========================================================= */
+
+updateLiveMarket();
+
+loadCandles("15min");
+
+
+/*
+Live price:
+every 2 seconds.
+
+Candles:
+every 60 seconds.
+*/
+
+setInterval(
+    updateLiveMarket,
+    2000
+);
+
+
+setInterval(
+    () => {
+        loadCandles(
+            currentInterval
+        );
+    },
+    60000
+);
+
+
+</script>
+
 
 </body>
+
 </html>
