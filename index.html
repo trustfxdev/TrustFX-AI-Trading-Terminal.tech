@@ -203,6 +203,31 @@ button {
 .chart svg {
     width: 100%;
     height: 100%;
+    display: block;
+}
+
+.candle-grid {
+    stroke: rgba(255,255,255,.035);
+    stroke-width: 1;
+}
+
+.candle-up {
+    fill: #19d879;
+    stroke: #19d879;
+}
+
+.candle-down {
+    fill: #ff5c5c;
+    stroke: #ff5c5c;
+}
+
+.candle-wick {
+    stroke-width: 1.2;
+}
+
+.chart-empty {
+    fill: #8290a4;
+    font-size: 18px;
 }
 
 .chart-label {
@@ -476,74 +501,17 @@ button {
 
     <div class="chart">
 
-        <svg viewBox="0 0 1000 500" preserveAspectRatio="none">
-
-            <polyline
-                points="
-                0,390
-                50,370
-                100,410
-                150,350
-                200,360
-                250,310
-                300,330
-                350,270
-                400,300
-                450,240
-                500,260
-                550,210
-                600,230
-                650,170
-                700,205
-                750,130
-                800,155
-                850,105
-                900,125
-                950,75
-                1000,100"
-                fill="none"
-                stroke="#19d879"
-                stroke-width="3"
-            />
-
-            <line
-                x1="570"
-                y1="265"
-                x2="570"
-                y2="500"
-                stroke="#0066ff"
-                stroke-dasharray="6"
-            />
-
-            <line
-                x1="570"
-                y1="335"
-                x2="1000"
-                y2="335"
-                stroke="#ff4747"
-                stroke-dasharray="6"
-            />
-
-            <line
-                x1="570"
-                y1="155"
-                x2="1000"
-                y2="155"
-                stroke="#19a866"
-                stroke-dasharray="6"
-            />
-
-        </svg>
+        <svg id="candleChart" viewBox="0 0 1000 500" preserveAspectRatio="none" aria-label="TrustFX live candlestick chart"></svg>
 
         <div class="chart-label entry" id="entryLabel">
             LIVE PRICE
         </div>
 
-        <div class="chart-label sl">
+        <div class="chart-label sl" id="slLabel">
             SL — ENGINE PENDING
         </div>
 
-        <div class="chart-label tp1">
+        <div class="chart-label tp1" id="tpLabel">
             TP — ENGINE PENDING
         </div>
 
@@ -740,137 +708,7 @@ button {
 </div>
 
 
-<script>
-
-/* =========================================================
-   TRUSTFX LIVE MARKET CONNECTION
-   ========================================================= */
-
-const API_URL =
-    "https://trustfx-ai-trading-terminal-tech.onrender.com/prices";
-
-
-async function updateLiveMarket() {
-
-    try {
-
-        const response = await fetch(API_URL, {
-            cache: "no-store"
-        });
-
-        if (!response.ok) {
-            throw new Error("Backend response failed");
-        }
-
-        const data = await response.json();
-
-        const prices = data.prices || {};
-
-        /* XAU/USD */
-
-        if (prices["XAU/USD"]) {
-
-            const xau =
-                Number(prices["XAU/USD"].price);
-
-            if (Number.isFinite(xau)) {
-
-                document.getElementById("price").textContent =
-                    "$" + xau.toFixed(2);
-
-                document.getElementById("analysisPrice").textContent =
-                    xau.toFixed(2);
-
-                document.getElementById("xauScannerPrice").textContent =
-                    "$" + xau.toFixed(2);
-
-                document.getElementById("entryLabel").textContent =
-                    "LIVE " + xau.toFixed(2);
-            }
-        }
-
-
-        /* EUR/USD */
-
-        if (prices["EUR/USD"]) {
-
-            const eur =
-                Number(prices["EUR/USD"].price);
-
-            if (Number.isFinite(eur)) {
-
-                document.getElementById("eurScannerPrice").textContent =
-                    eur.toFixed(5);
-            }
-        }
-
-
-        /* CONNECTION STATUS */
-
-        document.getElementById("connectionStatus").textContent =
-            "Live Market Connected";
-
-        document.getElementById("feedStatus").textContent =
-            "ONLINE";
-
-        document.getElementById("feedStatus").className =
-            "value green";
-
-        document.getElementById("scanTime").textContent =
-            new Date().toLocaleTimeString();
-
-    }
-
-    catch (error) {
-
-        console.error(
-            "TrustFX market connection error:",
-            error
-        );
-
-        document.getElementById("connectionStatus").textContent =
-            "Market Connection Error";
-
-        document.getElementById("feedStatus").textContent =
-            "OFFLINE";
-
-        document.getElementById("feedStatus").className =
-            "value red";
-
-        document.getElementById("scanTime").textContent =
-            "Connection error";
-    }
-
-}
-
-
-/* Check live market every 2 seconds */
-
-updateLiveMarket();
-
-setInterval(updateLiveMarket, 2000);
-
-
-/* =========================================================
-   TIMEFRAME BUTTONS
-   ========================================================= */
-
-document.querySelectorAll(".tf").forEach(button => {
-
-    button.addEventListener("click", function() {
-
-        document.querySelectorAll(".tf")
-            .forEach(btn =>
-                btn.classList.remove("active")
-            );
-
-        this.classList.add("active");
-
-    });
-
-});
-
-</script>
+<script>\n\nconst API_BASE = "https://trustfx-ai-trading-terminal-tech.onrender.com";\nconst PRICE_API = `${API_BASE}/prices`;\nconst CANDLE_API = `${API_BASE}/candles/XAUUSD`;\nlet currentInterval = "15min";\n\nconst timeframeMap = {\n    M1: "1min",\n    M5: "5min",\n    M15: "15min",\n    H1: "1h",\n    H4: "4h",\n    D1: "1day"\n};\n\nfunction xauFormat(value) {\n    return Number(value).toFixed(2);\n}\n\nasync function updateLiveMarket() {\n    try {\n        const response = await fetch(PRICE_API, { cache: "no-store" });\n        if (!response.ok) throw new Error("Backend response failed");\n        const data = await response.json();\n        const prices = data.prices || {};\n\n        if (prices["XAU/USD"]) {\n            const xau = Number(prices["XAU/USD"].price);\n            if (Number.isFinite(xau)) {\n                document.getElementById("price").textContent = "$" + xauFormat(xau);\n                document.getElementById("analysisPrice").textContent = xauFormat(xau);\n                document.getElementById("xauScannerPrice").textContent = "$" + xauFormat(xau);\n                document.getElementById("entryLabel").textContent = "LIVE " + xauFormat(xau);\n            }\n        }\n\n        if (prices["EUR/USD"]) {\n            const eur = Number(prices["EUR/USD"].price);\n            if (Number.isFinite(eur)) document.getElementById("eurScannerPrice").textContent = eur.toFixed(5);\n        }\n\n        document.getElementById("connectionStatus").textContent = "Live Market Connected";\n        document.getElementById("feedStatus").textContent = "ONLINE";\n        document.getElementById("feedStatus").className = "value green";\n        document.getElementById("scanTime").textContent = new Date().toLocaleTimeString();\n    } catch (error) {\n        console.error("TrustFX market connection error:", error);\n        document.getElementById("connectionStatus").textContent = "Market Connection Error";\n        document.getElementById("feedStatus").textContent = "OFFLINE";\n        document.getElementById("feedStatus").className = "value red";\n        document.getElementById("scanTime").textContent = "Connection error";\n    }\n}\n\nasync function loadCandles(interval = currentInterval) {\n    currentInterval = interval;\n    const chart = document.getElementById("candleChart");\n    chart.innerHTML = `<text x="500" y="250" text-anchor="middle" class="chart-empty">Loading ${interval} candles...</text>`;\n\n    try {\n        const response = await fetch(`${CANDLE_API}?interval=${encodeURIComponent(interval)}&outputsize=100`, { cache: "no-store" });\n        if (!response.ok) throw new Error(`Candle request failed: ${response.status}`);\n        const data = await response.json();\n        if (data.status !== "online" || !Array.isArray(data.candles) || !data.candles.length) {\n            throw new Error(data.message || "No candle data received.");\n        }\n        renderCandles(data.candles);\n    } catch (error) {\n        console.error("TrustFX candle error:", error);\n        chart.innerHTML = `<text x="500" y="235" text-anchor="middle" class="chart-empty">Candle data unavailable</text><text x="500" y="270" text-anchor="middle" class="chart-empty" style="font-size:13px;">${String(error.message).replace(/[&<>]/g, "")}</text>`;\n    }\n}\n\nfunction svgEl(name, attrs) {\n    const el = document.createElementNS("http://www.w3.org/2000/svg", name);\n    Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));\n    return el;\n}\n\nfunction renderCandles(raw) {\n    const chart = document.getElementById("candleChart");\n    chart.innerHTML = "";\n\n    const candles = [...raw].reverse().map(c => ({\n        open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close)\n    })).filter(c => [c.open,c.high,c.low,c.close].every(Number.isFinite));\n\n    const visible = candles.slice(-70);\n    if (!visible.length) {\n        chart.innerHTML = '<text x="500" y="250" text-anchor="middle" class="chart-empty">No valid candle data</text>';\n        return;\n    }\n\n    const W=1000,H=500,pad={top:25,right:25,bottom:30,left:20};\n    const pw=W-pad.left-pad.right, ph=H-pad.top-pad.bottom;\n    let min=Math.min(...visible.map(c=>c.low)), max=Math.max(...visible.map(c=>c.high));\n    let range=max-min; if (!range || !Number.isFinite(range)) range=1;\n    min-=range*.08; max+=range*.08; range=max-min;\n    const y=p=>pad.top+((max-p)/range)*ph;\n\n    const grid=svgEl("g", {class:"candle-grid"});\n    for(let i=1;i<8;i++){ const x=pad.left+(pw/8)*i; grid.appendChild(svgEl("line",{x1:x,y1:pad.top,x2:x,y2:H-pad.bottom})); }\n    for(let i=1;i<7;i++){ const yy=pad.top+(ph/7)*i; grid.appendChild(svgEl("line",{x1:pad.left,y1:yy,x2:W-pad.right,y2:yy})); }\n    chart.appendChild(grid);\n\n    const slot=pw/visible.length;\n    const bodyWidth=Math.max(3,Math.min(10,slot*.62));\n\n    visible.forEach((c,i)=>{\n        const x=pad.left+slot*i+slot/2;\n        const bullish=c.close>=c.open;\n        const cls=bullish?"candle-up":"candle-down";\n        chart.appendChild(svgEl("line",{x1:x,y1:y(c.high),x2:x,y2:y(c.low),class:`candle-wick ${cls}`}));\n        const top=Math.min(y(c.open),y(c.close));\n        const height=Math.max(1.5,Math.abs(y(c.close)-y(c.open)));\n        chart.appendChild(svgEl("rect",{x:x-bodyWidth/2,y:top,width:bodyWidth,height:height,class:cls,rx:1}));\n    });\n\n    const latest=visible[visible.length-1];\n    const latestY=y(latest.close);\n    chart.appendChild(svgEl("line",{x1:pad.left,y1:latestY,x2:W-pad.right,y2:latestY,stroke:"#0066ff","stroke-dasharray":"5 5","stroke-width":"1"}));\n    const label=svgEl("text",{x:W-pad.right,y:Math.max(18,Math.min(H-8,latestY-6)),"text-anchor":"end",fill:"#ffffff","font-size":"12","font-weight":"bold"});\n    label.textContent=xauFormat(latest.close); chart.appendChild(label);\n\n    document.getElementById("price").textContent="$"+xauFormat(latest.close);\n    document.getElementById("analysisPrice").textContent=xauFormat(latest.close);\n    document.getElementById("xauScannerPrice").textContent="$"+xauFormat(latest.close);\n    document.getElementById("entryLabel").textContent="LIVE "+xauFormat(latest.close);\n}\n\ndocument.querySelectorAll(".tf").forEach(button=>{\n    button.addEventListener("click",()=>{\n        document.querySelectorAll(".tf").forEach(btn=>btn.classList.remove("active"));\n        button.classList.add("active");\n        const interval=timeframeMap[button.textContent.trim()];\n        if(interval) loadCandles(interval);\n    });\n});\n\nupdateLiveMarket();\nloadCandles("15min");\nsetInterval(updateLiveMarket,2000);\nsetInterval(()=>loadCandles(currentInterval),60000);\n\n</script>
 
 </body>
 </html>
