@@ -1,403 +1,356 @@
-// =====================================================
-// TRUSTFX INTELLIGENCE ENGINE
-// Stage 3.2
-//
-// Detects:
-// - Market Structure
-// - BOS / CHoCH
-// - Liquidity Sweep
-// - Rejection
-// - Displacement
-// - Relevant FVG
-// - Active FVG
-// - FVG Retest
-// - Entry Trigger
-// =====================================================
+// backend/analysis.js
 
-export function analyzeMarketStructure(candles) {
+function toNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
 
-  if (!Array.isArray(candles) || candles.length < 30) {
-    return {
-      status: "waiting",
-      trend: "NEUTRAL",
-      structure: "WAITING",
-      entry: {
-        status: "WAITING",
-        direction: "NONE",
-        confirmed: false
-      },
-      message: "Not enough candle data."
-    };
+function normalizeCandle(candle) {
+  return {
+    datetime: candle.datetime,
+
+    open: toNumber(candle.open),
+    high: toNumber(candle.high),
+    low: toNumber(candle.low),
+    close: toNumber(candle.close),
+
+    volume: toNumber(candle.volume)
+  };
+}
+
+function candleBody(candle) {
+  return Math.abs(candle.close - candle.open);
+}
+
+function candleRange(candle) {
+  return candle.high - candle.low;
+}
+
+function upperWick(candle) {
+  return (
+    candle.high -
+    Math.max(candle.open, candle.close)
+  );
+}
+
+function lowerWick(candle) {
+  return (
+    Math.min(candle.open, candle.close) -
+    candle.low
+  );
+}
+
+function isBullish(candle) {
+  return candle.close > candle.open;
+}
+
+function isBearish(candle) {
+  return candle.close < candle.open;
+}
+
+function averageBody(candles, endIndex, lookback = 20) {
+  const start = Math.max(
+    0,
+    endIndex - lookback
+  );
+
+  const selected = candles.slice(
+    start,
+    endIndex
+  );
+
+  if (selected.length === 0) {
+    return 0;
   }
 
-  // =====================================================
-  // PREPARE DATA
-  // =====================================================
+  const total = selected.reduce(
+    (sum, candle) =>
+      sum + candleBody(candle),
+    0
+  );
 
-  const data = [...candles]
-    .reverse()
-    .map(candle => ({
-      time: candle.datetime,
-      open: Number(candle.open),
-      high: Number(candle.high),
-      low: Number(candle.low),
-      close: Number(candle.close)
-    }));
+  return total / selected.length;
+}
 
-
-  // =====================================================
-  // SWING DETECTION
-  // =====================================================
-
+function findSwingHighs(candles, strength = 2) {
   const swings = [];
 
-  const left = 2;
-  const right = 2;
-
   for (
-    let i = left;
-    i < data.length - right;
+    let i = strength;
+    i < candles.length - strength;
     i++
   ) {
+    const current = candles[i];
 
-    const candle = data[i];
+    let isSwing = true;
 
-    let isSwingHigh = true;
-    let isSwingLow = true;
-
-    for (let j = 1; j <= left; j++) {
-
+    for (
+      let j = 1;
+      j <= strength;
+      j++
+    ) {
       if (
-        candle.high <= data[i - j].high ||
-        candle.high <= data[i + j].high
+        current.high <=
+          candles[i - j].high ||
+        current.high <=
+          candles[i + j].high
       ) {
-        isSwingHigh = false;
-      }
-
-      if (
-        candle.low >= data[i - j].low ||
-        candle.low >= data[i + j].low
-      ) {
-        isSwingLow = false;
+        isSwing = false;
+        break;
       }
     }
 
-    if (isSwingHigh) {
+    if (isSwing) {
       swings.push({
-        type: "HIGH",
-        price: candle.high,
-        time: candle.time,
-        index: i
-      });
-    }
-
-    if (isSwingLow) {
-      swings.push({
-        type: "LOW",
-        price: candle.low,
-        time: candle.time,
-        index: i
+        index: i,
+        price: current.high,
+        time: current.datetime
       });
     }
   }
 
+  return swings;
+}
 
-  const highs = swings
-    .filter(s => s.type === "HIGH")
-    .slice(-5);
+function findSwingLows(candles, strength = 2) {
+  const swings = [];
 
-  const lows = swings
-    .filter(s => s.type === "LOW")
-    .slice(-5);
+  for (
+    let i = strength;
+    i < candles.length - strength;
+    i++
+  ) {
+    const current = candles[i];
 
+    let isSwing = true;
 
-  if (highs.length < 2 || lows.length < 2) {
+    for (
+      let j = 1;
+      j <= strength;
+      j++
+    ) {
+      if (
+        current.low >=
+          candles[i - j].low ||
+        current.low >=
+          candles[i + j].low
+      ) {
+        isSwing = false;
+        break;
+      }
+    }
 
+    if (isSwing) {
+      swings.push({
+        index: i,
+        price: current.low,
+        time: current.datetime
+      });
+    }
+  }
+
+  return swings;
+}
+
+function analyzeMarketStructure(rawCandles) {
+  const candles =
+    rawCandles.map(normalizeCandle);
+
+  if (candles.length < 20) {
     return {
-      status: "waiting",
-      trend: "NEUTRAL",
-      structure: "WAITING",
-
-      bos: false,
-      bosDirection: "NONE",
-
-      choch: false,
-      chochDirection: "NONE",
-
-      liquidity: {
-        status: "WAITING"
-      },
-
-      displacement: {
-        status: "WAITING"
-      },
-
-      fvg: {
-        status: "WAITING"
-      },
-
-      setup: {
-        status: "WAITING",
-        direction: "NONE"
-      },
-
-      entry: {
-        status: "WAITING",
-        direction: "NONE",
-        confirmed: false
-      },
-
-      message: "Waiting for confirmed structure."
+      status: "INSUFFICIENT DATA",
+      message:
+        "Not enough candles for market structure analysis."
     };
   }
 
+  const lastIndex =
+    candles.length - 1;
 
-  // =====================================================
-  // STRUCTURE
-  // =====================================================
+  const current =
+    candles[lastIndex];
 
-  const previousHigh =
-    highs[highs.length - 2];
+  const currentPrice =
+    current.close;
 
-  const latestHigh =
-    highs[highs.length - 1];
+  // --------------------------------------------------
+  // STAGE 1
+  // MARKET STRUCTURE
+  // --------------------------------------------------
 
-  const previousLow =
-    lows[lows.length - 2];
+  const swingHighs =
+    findSwingHighs(candles, 2);
 
-  const latestLow =
-    lows[lows.length - 1];
+  const swingLows =
+    findSwingLows(candles, 2);
 
+  const lastSwingHigh =
+    swingHighs.length > 0
+      ? swingHighs[swingHighs.length - 1]
+      : null;
+
+  const previousSwingHigh =
+    swingHighs.length > 1
+      ? swingHighs[swingHighs.length - 2]
+      : null;
+
+  const lastSwingLow =
+    swingLows.length > 0
+      ? swingLows[swingLows.length - 1]
+      : null;
+
+  const previousSwingLow =
+    swingLows.length > 1
+      ? swingLows[swingLows.length - 2]
+      : null;
 
   const higherHigh =
-    latestHigh.price >
-    previousHigh.price;
+    !!(
+      lastSwingHigh &&
+      previousSwingHigh &&
+      lastSwingHigh.price >
+        previousSwingHigh.price
+    );
 
   const higherLow =
-    latestLow.price >
-    previousLow.price;
+    !!(
+      lastSwingLow &&
+      previousSwingLow &&
+      lastSwingLow.price >
+        previousSwingLow.price
+    );
 
   const lowerHigh =
-    latestHigh.price <
-    previousHigh.price;
+    !!(
+      lastSwingHigh &&
+      previousSwingHigh &&
+      lastSwingHigh.price <
+        previousSwingHigh.price
+    );
 
   const lowerLow =
-    latestLow.price <
-    previousLow.price;
-
+    !!(
+      lastSwingLow &&
+      previousSwingLow &&
+      lastSwingLow.price <
+        previousSwingLow.price
+    );
 
   let trend = "NEUTRAL";
   let structure = "MIXED";
 
-
-  if (higherHigh && higherLow) {
+  if (lowerHigh && lowerLow) {
+    trend = "BEARISH";
+    structure = "LH + LL";
+  } else if (higherHigh && higherLow) {
     trend = "BULLISH";
     structure = "HH + HL";
   }
 
-
-  if (lowerHigh && lowerLow) {
-    trend = "BEARISH";
-    structure = "LH + LL";
-  }
-
-
-  const current =
-    data[data.length - 1];
-
-
-  // =====================================================
-  // BOS / CHoCH
-  // =====================================================
-
-  const bullishBreak =
-    current.close >
-    latestHigh.price;
-
-  const bearishBreak =
-    current.close <
-    latestLow.price;
-
+  // --------------------------------------------------
+  // BOS / CHOCH
+  // --------------------------------------------------
 
   let bos = false;
   let bosDirection = "NONE";
 
-
-  if (bullishBreak) {
-    bos = true;
-    bosDirection = "BULLISH";
-  }
-
-
-  if (bearishBreak) {
-    bos = true;
-    bosDirection = "BEARISH";
-  }
-
-
   let choch = false;
   let chochDirection = "NONE";
 
-
   if (
-    trend === "BEARISH" &&
-    bullishBreak
+    lastSwingHigh &&
+    currentPrice > lastSwingHigh.price
   ) {
+    bos = true;
+    bosDirection = "BULLISH";
 
-    choch = true;
-    chochDirection = "BULLISH";
-  }
-
-
-  if (
-    trend === "BULLISH" &&
-    bearishBreak
-  ) {
-
-    choch = true;
-    chochDirection = "BEARISH";
-  }
-
-
-  // =====================================================
-  // LIQUIDITY LEVELS
-  // =====================================================
-
-  const buySideLiquidity =
-    latestHigh.price;
-
-  const sellSideLiquidity =
-    latestLow.price;
-
-  const previousBuySideLiquidity =
-    previousHigh.price;
-
-  const previousSellSideLiquidity =
-    previousLow.price;
-
-
-  // =====================================================
-  // RECENT SWEEP + REJECTION
-  // =====================================================
-
-  let recentSweep = null;
-
-  const sweepStart =
-    Math.max(
-      0,
-      data.length - 7
-    );
-
-
-  for (
-    let i = sweepStart;
-    i < data.length;
-    i++
-  ) {
-
-    const candle =
-      data[i];
-
-    const range =
-      Math.max(
-        candle.high -
-        candle.low,
-        0.00001
-      );
-
-
-    const body =
-      Math.abs(
-        candle.close -
-        candle.open
-      );
-
-
-    const upper =
-      candle.high -
-      Math.max(
-        candle.open,
-        candle.close
-      );
-
-
-    const lower =
-      Math.min(
-        candle.open,
-        candle.close
-      ) -
-      candle.low;
-
-
-    const highSweep =
-      candle.high >
-        buySideLiquidity &&
-      candle.close <
-        buySideLiquidity;
-
-
-    const lowSweep =
-      candle.low <
-        sellSideLiquidity &&
-      candle.close >
-        sellSideLiquidity;
-
-
-    const bearishRejection =
-      highSweep &&
-      upper >=
-        range * 0.30;
-
-
-    const bullishRejection =
-      lowSweep &&
-      lower >=
-        range * 0.30;
-
-
-    if (
-      bearishRejection ||
-      bullishRejection
-    ) {
-
-      recentSweep = {
-
-        index: i,
-
-        time:
-          candle.time,
-
-        direction:
-          bearishRejection
-            ? "BEARISH"
-            : "BULLISH",
-
-        sweepDirection:
-          bearishRejection
-            ? "BUY-SIDE"
-            : "SELL-SIDE",
-
-        price:
-          bearishRejection
-            ? candle.high
-            : candle.low,
-
-        candleBody:
-          body,
-
-        candleRange:
-          range,
-
-        upperWick:
-          upper,
-
-        lowerWick:
-          lower
-
-      };
+    if (trend === "BEARISH") {
+      choch = true;
+      chochDirection = "BULLISH";
     }
   }
 
+  if (
+    lastSwingLow &&
+    currentPrice < lastSwingLow.price
+  ) {
+    bos = true;
+    bosDirection = "BEARISH";
+
+    if (trend === "BULLISH") {
+      choch = true;
+      chochDirection = "BEARISH";
+    }
+  }
+
+  // --------------------------------------------------
+  // STAGE 2
+  // LIQUIDITY
+  // --------------------------------------------------
+
+  const buySideLiquidity =
+    lastSwingHigh
+      ? lastSwingHigh.price
+      : null;
+
+  const sellSideLiquidity =
+    lastSwingLow
+      ? lastSwingLow.price
+      : null;
+
+  const previousBuySideLiquidity =
+    previousSwingHigh
+      ? previousSwingHigh.price
+      : null;
+
+  const previousSellSideLiquidity =
+    previousSwingLow
+      ? previousSwingLow.price
+      : null;
+
+  // --------------------------------------------------
+  // STAGE 3
+  // CANDLE REJECTION
+  // --------------------------------------------------
+
+  const body =
+    candleBody(current);
+
+  const range =
+    candleRange(current);
+
+  const currentUpperWick =
+    upperWick(current);
+
+  const currentLowerWick =
+    lowerWick(current);
+
+  let highSweep = false;
+  let lowSweep = false;
+
+  if (
+    buySideLiquidity !== null &&
+    current.high > buySideLiquidity
+  ) {
+    highSweep = true;
+  }
+
+  if (
+    sellSideLiquidity !== null &&
+    current.low < sellSideLiquidity
+  ) {
+    lowSweep = true;
+  }
+
+  const bearishRejection =
+    highSweep &&
+    current.close <
+      buySideLiquidity;
+
+  const bullishRejection =
+    lowSweep &&
+    current.close >
+      sellSideLiquidity;
 
   let sweep = false;
   let sweepDirection = "NONE";
@@ -405,658 +358,514 @@ export function analyzeMarketStructure(candles) {
   let rejection = false;
   let rejectionDirection = "NONE";
 
-  let highSweep = false;
-  let lowSweep = false;
-
-  let bearishRejection = false;
-  let bullishRejection = false;
-
-
-  if (recentSweep) {
-
+  if (bearishRejection) {
     sweep = true;
+    sweepDirection = "BUY-SIDE";
+
     rejection = true;
+    rejectionDirection = "BEARISH";
+  } else if (bullishRejection) {
+    sweep = true;
+    sweepDirection = "SELL-SIDE";
 
-    sweepDirection =
-      recentSweep.sweepDirection;
-
-    rejectionDirection =
-      recentSweep.direction;
-
-    highSweep =
-      recentSweep.sweepDirection ===
-      "BUY-SIDE";
-
-    lowSweep =
-      recentSweep.sweepDirection ===
-      "SELL-SIDE";
-
-    bearishRejection =
-      recentSweep.direction ===
-      "BEARISH";
-
-    bullishRejection =
-      recentSweep.direction ===
-      "BULLISH";
+    rejection = true;
+    rejectionDirection = "BULLISH";
   }
 
-
-  let liquidityStatus =
-    "NO SWEEP";
-
-
-  if (
-    sweep &&
-    rejection
-  ) {
-
-    liquidityStatus =
-      "CONFIRMED SWEEP";
-
-  } else if (sweep) {
-
-    liquidityStatus =
-      "SWEEP";
-  }
-
-
-  // =====================================================
+  // --------------------------------------------------
+  // STAGE 3.1
   // DISPLACEMENT
-  // =====================================================
+  // --------------------------------------------------
 
-  const lookback = 10;
-
-  const recentCandles =
-    data.slice(
-      Math.max(
-        0,
-        data.length -
-          lookback -
-          1
-      ),
-      data.length - 1
+  const avgBody =
+    averageBody(
+      candles,
+      lastIndex,
+      20
     );
 
+  const displacementMultiplier = 1.2;
 
-  const averageBody =
-    recentCandles.length > 0
-      ? recentCandles.reduce(
-          (sum, candle) =>
-            sum +
-            Math.abs(
-              candle.close -
-              candle.open
-            ),
-          0
-        ) /
-        recentCandles.length
-      : 0;
-
-
-  const displacementMultiplier =
-    1.20;
-
-
-  let displacement = false;
+  let displacementDetected =
+    false;
 
   let displacementDirection =
     "NONE";
 
-  let displacementIndex =
-    null;
-
   let displacementTime =
     null;
 
-
-  const displacementStart =
-    recentSweep
-      ? recentSweep.index + 1
-      : Math.max(
-          0,
-          data.length - 5
-        );
-
-
-  for (
-    let i = displacementStart;
-    i < data.length;
-    i++
-  ) {
-
-    const candle =
-      data[i];
-
-
-    const body =
-      Math.abs(
-        candle.close -
-        candle.open
-      );
-
-
-    const strongBody =
-      averageBody > 0 &&
-      body >=
-        averageBody *
-        displacementMultiplier;
-
-
-    if (!strongBody) {
-      continue;
-    }
-
-
-    if (
-      recentSweep &&
-      recentSweep.direction ===
-        "BEARISH" &&
-      candle.close <
-        candle.open
-    ) {
-
-      displacement = true;
-
-      displacementDirection =
-        "BEARISH";
-
-      displacementIndex =
-        i;
-
-      displacementTime =
-        candle.time;
-
-      break;
-    }
-
-
-    if (
-      recentSweep &&
-      recentSweep.direction ===
-        "BULLISH" &&
-      candle.close >
-        candle.open
-    ) {
-
-      displacement = true;
-
-      displacementDirection =
-        "BULLISH";
-
-      displacementIndex =
-        i;
-
-      displacementTime =
-        candle.time;
-
-      break;
-    }
-  }
-
-
-  let displacementStatus =
-    "NO DISPLACEMENT";
-
-
-  if (displacement) {
-    displacementStatus =
-      "CONFIRMED";
-  }
-
-
-  // =====================================================
-  // ACTIVE FVG DETECTION
-  // =====================================================
-
-  let bullishFVG = false;
-  let bearishFVG = false;
-
-  let fvgHigh = null;
-  let fvgLow = null;
-
-  let fvgDirection =
-    "NONE";
-
-  let fvgIndex = null;
-
-  let fvgCreatedTime =
+  let displacementIndex =
     null;
 
-
-  /*
-    We search recent candles for the latest FVG
-    that agrees with the displacement direction.
-  */
-
-
-  const searchStart =
-    displacementIndex !== null
-      ? Math.max(
-          2,
-          displacementIndex - 2
-        )
-      : Math.max(
-          2,
-          data.length - 8
-        );
-
-
   for (
-    let i = searchStart;
-    i < data.length;
+    let i = Math.max(
+      3,
+      candles.length - 10
+    );
+    i < candles.length;
     i++
   ) {
+    const candidate =
+      candles[i];
 
+    const candidateBody =
+      candleBody(candidate);
+
+    const candidateAverage =
+      averageBody(
+        candles,
+        i,
+        20
+      );
+
+    if (
+      candidateBody >=
+        candidateAverage *
+          displacementMultiplier
+    ) {
+      displacementDetected = true;
+
+      displacementDirection =
+        isBullish(candidate)
+          ? "BULLISH"
+          : isBearish(candidate)
+          ? "BEARISH"
+          : "NONE";
+
+      displacementTime =
+        candidate.datetime;
+
+      displacementIndex =
+        i;
+    }
+  }
+
+  // --------------------------------------------------
+  // STAGE 3.2
+  // FAIR VALUE GAP
+  // --------------------------------------------------
+
+  let fvg = null;
+
+  /*
+    Bullish FVG:
+
+    Candle 1 high
+          ↓
+    GAP
+          ↓
+    Candle 3 low
+
+    candle3.low > candle1.high
+  */
+
+  /*
+    Bearish FVG:
+
+    Candle 1 low
+          ↓
+    GAP
+          ↓
+    Candle 3 high
+
+    candle3.high < candle1.low
+  */
+
+  for (
+    let i = 2;
+    i < candles.length;
+    i++
+  ) {
     const candle1 =
-      data[i - 2];
+      candles[i - 2];
+
+    const candle2 =
+      candles[i - 1];
 
     const candle3 =
-      data[i];
+      candles[i];
 
-
-    // -----------------------------------------------
-    // BULLISH FVG
-    // -----------------------------------------------
-
+    // Bullish FVG
     if (
       candle3.low >
       candle1.high
     ) {
+      const gapHigh =
+        candle3.low;
 
-      if (
-        displacementDirection ===
-          "BULLISH" ||
-        displacementDirection ===
-          "NONE"
-      ) {
+      const gapLow =
+        candle1.high;
 
-        bullishFVG = true;
-        bearishFVG = false;
-
-        fvgDirection =
-          "BULLISH";
-
-        fvgLow =
-          candle1.high;
-
-        fvgHigh =
-          candle3.low;
-
-        fvgIndex =
-          i;
-
-        fvgCreatedTime =
-          candle3.time;
-      }
+      fvg = {
+        detected: true,
+        direction: "BULLISH",
+        high: gapHigh,
+        low: gapLow,
+        index: i,
+        time: candle3.datetime
+      };
     }
 
-
-    // -----------------------------------------------
-    // BEARISH FVG
-    // -----------------------------------------------
-
+    // Bearish FVG
     if (
       candle3.high <
       candle1.low
     ) {
+      const gapHigh =
+        candle1.low;
 
-      if (
-        displacementDirection ===
-          "BEARISH" ||
-        displacementDirection ===
-          "NONE"
-      ) {
+      const gapLow =
+        candle3.high;
 
-        bearishFVG = true;
-        bullishFVG = false;
-
-        fvgDirection =
-          "BEARISH";
-
-        fvgLow =
-          candle3.high;
-
-        fvgHigh =
-          candle1.low;
-
-        fvgIndex =
-          i;
-
-        fvgCreatedTime =
-          candle3.time;
-      }
+      fvg = {
+        detected: true,
+        direction: "BEARISH",
+        high: gapHigh,
+        low: gapLow,
+        index: i,
+        time: candle3.datetime
+      };
     }
   }
 
+  // --------------------------------------------------
+  // FIND MOST RELEVANT FVG
+  // --------------------------------------------------
 
-  let fvgStatus =
-    "NO ACTIVE FVG";
+  let relevantFVG =
+    null;
 
+  if (fvg) {
+    const fvgDirection =
+      fvg.direction;
 
-  if (
-    bullishFVG ||
-    bearishFVG
-  ) {
+    /*
+      Only accept FVG when it agrees with
+      displacement direction where possible.
+    */
 
-    fvgStatus =
-      "ACTIVE FVG";
+    if (
+      displacementDetected &&
+      displacementDirection !==
+        fvgDirection
+    ) {
+      relevantFVG = null;
+    } else {
+      relevantFVG = fvg;
+    }
   }
 
-
-  // =====================================================
-  // INVALIDATE FVG IF PRICE COMPLETELY BREAKS THROUGH
-  // =====================================================
+  // --------------------------------------------------
+  // FVG INVALIDATION
+  // --------------------------------------------------
 
   let fvgInvalidated =
     false;
 
+  if (relevantFVG) {
+    if (
+      relevantFVG.direction ===
+      "BULLISH"
+    ) {
+      /*
+        Bullish FVG becomes invalid if
+        price closes completely below it.
+      */
 
-  if (
-    bullishFVG &&
-    current.close <
-      fvgLow
-  ) {
+      if (
+        current.close <
+        relevantFVG.low
+      ) {
+        fvgInvalidated = true;
+      }
+    }
 
-    fvgInvalidated =
-      true;
+    if (
+      relevantFVG.direction ===
+      "BEARISH"
+    ) {
+      /*
+        Bearish FVG becomes invalid if
+        price closes completely above it.
+      */
+
+      if (
+        current.close >
+        relevantFVG.high
+      ) {
+        fvgInvalidated = true;
+      }
+    }
   }
 
-
-  if (
-    bearishFVG &&
-    current.close >
-      fvgHigh
-  ) {
-
-    fvgInvalidated =
-      true;
-  }
-
-
-  if (fvgInvalidated) {
-
-    fvgStatus =
-      "FVG INVALIDATED";
-
-    bullishFVG = false;
-    bearishFVG = false;
-
-    fvgDirection =
-      "NONE";
-  }
-
-
-  // =====================================================
+  // --------------------------------------------------
   // FVG RETEST
-  // =====================================================
+  // --------------------------------------------------
 
-  let fvgRetest =
-    false;
-
-
-  let fvgPosition =
-    "AWAY";
-
+  let fvgRetest = false;
+  let fvgPosition = "NONE";
 
   if (
-    fvgDirection !==
-      "NONE" &&
-    fvgLow !== null &&
-    fvgHigh !== null
+    relevantFVG &&
+    !fvgInvalidated
   ) {
+    const fvgHigh =
+      relevantFVG.high;
 
-    const touchesZone =
-      current.low <=
-        fvgHigh &&
-      current.high >=
-        fvgLow;
+    const fvgLow =
+      relevantFVG.low;
 
+    /*
+      Price overlaps the FVG.
+    */
 
-    if (touchesZone) {
+    const touchesFVG =
+      current.low <= fvgHigh &&
+      current.high >= fvgLow;
 
-      fvgRetest =
-        true;
+    if (touchesFVG) {
+      fvgRetest = true;
 
-      fvgPosition =
-        "INSIDE FVG";
-    }
-
-
-    if (
-      current.close >
-      fvgHigh
-    ) {
-
-      fvgPosition =
-        "ABOVE FVG";
-    }
-
-
-    if (
-      current.close <
-      fvgLow
-    ) {
-
-      fvgPosition =
-        "BELOW FVG";
+      if (
+        current.close >
+        fvgHigh
+      ) {
+        fvgPosition =
+          "ABOVE";
+      } else if (
+        current.close <
+        fvgLow
+      ) {
+        fvgPosition =
+          "BELOW";
+      } else {
+        fvgPosition =
+          "INSIDE";
+      }
     }
   }
 
-
-  // =====================================================
+  // --------------------------------------------------
   // ENTRY TRIGGER
-  // =====================================================
-
-  let setupStatus =
-    "WAITING";
-
-  let setupDirection =
-    "NONE";
-
-
-  /*
-    SELL setup
-
-    BUY-SIDE SWEEP
-          +
-    BEARISH REJECTION
-          +
-    BEARISH DISPLACEMENT
-          +
-    BEARISH BOS / CHoCH
-          +
-    BEARISH FVG
-  */
-
-
-  const bearishStructureConfirm =
-    bearishBreak ||
-    (
-      choch &&
-      chochDirection ===
-        "BEARISH"
-    ) ||
-    (
-      bos &&
-      bosDirection ===
-        "BEARISH"
-    );
-
-
-  const bearishSetup =
-    bearishRejection &&
-    displacement &&
-    displacementDirection ===
-      "BEARISH" &&
-    bearishStructureConfirm &&
-    bearishFVG;
-
-
-  /*
-    BUY setup
-  */
-
-
-  const bullishStructureConfirm =
-    bullishBreak ||
-    (
-      choch &&
-      chochDirection ===
-        "BULLISH"
-    ) ||
-    (
-      bos &&
-      bosDirection ===
-        "BULLISH"
-    );
-
-
-  const bullishSetup =
-    bullishRejection &&
-    displacement &&
-    displacementDirection ===
-      "BULLISH" &&
-    bullishStructureConfirm &&
-    bullishFVG;
-
-
-  if (bearishSetup) {
-
-    setupStatus =
-      "SELL SETUP CONFIRMED";
-
-    setupDirection =
-      "SELL";
-  }
-
-
-  if (bullishSetup) {
-
-    setupStatus =
-      "BUY SETUP CONFIRMED";
-
-    setupDirection =
-      "BUY";
-  }
-
-
-  // =====================================================
-  // ENTRY
-  // =====================================================
-
-  let entryStatus =
-    "WAITING";
-
-  let entryDirection =
-    "NONE";
+  // --------------------------------------------------
 
   let entryConfirmed =
     false;
 
+  let entryDirection =
+    "NONE";
+
+  let setupStatus =
+    "WAITING";
+
+  let entryPrice =
+    null;
+
+  let stopLoss =
+    null;
+
+  let takeProfit1 =
+    null;
+
+  let takeProfit2 =
+    null;
+
+  let takeProfit3 =
+    null;
 
   /*
-    Entry is only considered after:
-      1. Setup confirmed
-      2. Correct FVG retest
+    BUY setup:
+
+    1. Bullish liquidity sweep
+    2. Bullish rejection
+    3. Bullish displacement
+    4. Bullish FVG
+    5. FVG retest
+    6. Current candle closes bullish
   */
 
+  const bullishSetup =
+    bullishRejection &&
+    (
+      displacementDirection ===
+        "BULLISH" ||
+      displacementDetected === false
+    ) &&
+    relevantFVG &&
+    relevantFVG.direction ===
+      "BULLISH" &&
+    fvgRetest &&
+    !fvgInvalidated;
+
+  /*
+    SELL setup:
+
+    1. Bearish liquidity sweep
+    2. Bearish rejection
+    3. Bearish displacement
+    4. Bearish FVG
+    5. FVG retest
+    6. Current candle closes bearish
+  */
+
+  const bearishSetup =
+    bearishRejection &&
+    (
+      displacementDirection ===
+        "BEARISH" ||
+      displacementDetected === false
+    ) &&
+    relevantFVG &&
+    relevantFVG.direction ===
+      "BEARISH" &&
+    fvgRetest &&
+    !fvgInvalidated;
 
   if (
-    setupDirection ===
-      "SELL"
+    bullishSetup &&
+    isBullish(current)
   ) {
+    entryConfirmed = true;
+    entryDirection = "BUY";
+    setupStatus = "CONFIRMED";
 
-    entryDirection =
-      "SELL";
+    entryPrice =
+      current.close;
 
-    if (fvgRetest) {
+    /*
+      SL goes below the sweep/FVG area.
+    */
 
-      entryStatus =
-        "SELL CONFIRMED";
+    const baseSL =
+      Math.min(
+        current.low,
+        relevantFVG.low
+      );
 
-      entryConfirmed =
-        true;
+    stopLoss =
+      baseSL;
 
-    } else {
+    const risk =
+      entryPrice -
+      stopLoss;
 
-      entryStatus =
-        "WAITING FOR FVG RETEST";
+    if (risk > 0) {
+      takeProfit1 =
+        entryPrice +
+        risk * 1.0;
+
+      takeProfit2 =
+        entryPrice +
+        risk * 2.0;
+
+      takeProfit3 =
+        entryPrice +
+        risk * 3.0;
     }
   }
 
-
   if (
-    setupDirection ===
-      "BUY"
+    bearishSetup &&
+    isBearish(current)
   ) {
+    entryConfirmed = true;
+    entryDirection = "SELL";
+    setupStatus = "CONFIRMED";
 
-    entryDirection =
-      "BUY";
+    entryPrice =
+      current.close;
 
-    if (fvgRetest) {
+    /*
+      SL goes above the sweep/FVG area.
+    */
 
-      entryStatus =
-        "BUY CONFIRMED";
+    const baseSL =
+      Math.max(
+        current.high,
+        relevantFVG.high
+      );
 
-      entryConfirmed =
-        true;
+    stopLoss =
+      baseSL;
 
-    } else {
+    const risk =
+      stopLoss -
+      entryPrice;
 
-      entryStatus =
-        "WAITING FOR FVG RETEST";
+    if (risk > 0) {
+      takeProfit1 =
+        entryPrice -
+        risk * 1.0;
+
+      takeProfit2 =
+        entryPrice -
+        risk * 2.0;
+
+      takeProfit3 =
+        entryPrice -
+        risk * 3.0;
     }
   }
 
-
-  // =====================================================
+  // --------------------------------------------------
   // CONFIRMATION SCORE
-  // =====================================================
+  // --------------------------------------------------
 
-  let score =
-    0;
+  let confirmationScore = 0;
 
+  const maxConfirmationScore =
+    6;
 
-  if (trend !== "NEUTRAL") {
-    score += 1;
+  if (
+    trend !== "NEUTRAL"
+  ) {
+    confirmationScore++;
   }
 
   if (sweep) {
-    score += 1;
+    confirmationScore++;
   }
 
   if (rejection) {
-    score += 1;
-  }
-
-  if (displacement) {
-    score += 1;
-  }
-
-  if (bos || choch) {
-    score += 1;
+    confirmationScore++;
   }
 
   if (
-    bullishFVG ||
-    bearishFVG
+    displacementDetected
   ) {
-    score += 1;
+    confirmationScore++;
+  }
+
+  if (
+    relevantFVG &&
+    !fvgInvalidated
+  ) {
+    confirmationScore++;
   }
 
   if (fvgRetest) {
-    score += 1;
+    confirmationScore++;
   }
 
+  // --------------------------------------------------
+  // FINAL STATUS
+  // --------------------------------------------------
 
-  // =====================================================
-  // FINAL RESULT
-  // =====================================================
+  let finalStatus =
+    "WAIT";
+
+  if (entryConfirmed) {
+    finalStatus =
+      entryDirection;
+  }
+
+  // --------------------------------------------------
+  // RETURN COMPLETE ANALYSIS
+  // --------------------------------------------------
 
   return {
-
-    status:
-      "active",
+    status: finalStatus,
 
     trend,
 
@@ -1070,46 +879,51 @@ export function analyzeMarketStructure(candles) {
 
     chochDirection,
 
-
-    currentPrice:
-      current.close,
-
+    currentPrice,
 
     swingHigh:
-      latestHigh.price,
+      lastSwingHigh
+        ? lastSwingHigh.price
+        : null,
 
     swingLow:
-      latestLow.price,
-
+      lastSwingLow
+        ? lastSwingLow.price
+        : null,
 
     previousSwingHigh:
-      previousHigh.price,
+      previousSwingHigh
+        ? previousSwingHigh.price
+        : null,
 
     previousSwingLow:
-      previousLow.price,
-
+      previousSwingLow
+        ? previousSwingLow.price
+        : null,
 
     higherHigh,
     higherLow,
     lowerHigh,
     lowerLow,
 
-
     lastSwingHighTime:
-      latestHigh.time,
+      lastSwingHigh
+        ? lastSwingHigh.time
+        : null,
 
     lastSwingLowTime:
-      latestLow.time,
+      lastSwingLow
+        ? lastSwingLow.time
+        : null,
 
-
-    // =================================================
+    // -----------------------------------------------
     // LIQUIDITY
-    // =================================================
+    // -----------------------------------------------
 
     liquidity: {
-
-      status:
-        liquidityStatus,
+      status: sweep
+        ? "CONFIRMED SWEEP"
+        : "NO SWEEP",
 
       buySideLiquidity,
 
@@ -1135,29 +949,31 @@ export function analyzeMarketStructure(candles) {
 
       bullishRejection,
 
-      sweepTime:
-        recentSweep
-          ? recentSweep.time
-          : null,
+      upperWick:
+        currentUpperWick,
 
-      sweepPrice:
-        recentSweep
-          ? recentSweep.price
-          : null
+      lowerWick:
+        currentLowerWick,
+
+      candleRange:
+        range,
+
+      candleBody:
+        body
     },
 
-
-    // =================================================
+    // -----------------------------------------------
     // DISPLACEMENT
-    // =================================================
+    // -----------------------------------------------
 
     displacement: {
-
       status:
-        displacementStatus,
+        displacementDetected
+          ? "DISPLACEMENT DETECTED"
+          : "NO DISPLACEMENT",
 
       detected:
-        displacement,
+        displacementDetected,
 
       direction:
         displacementDirection,
@@ -1165,99 +981,147 @@ export function analyzeMarketStructure(candles) {
       time:
         displacementTime,
 
-      candleBody,
+      index:
+        displacementIndex,
 
-      averageBody,
+      candleBody:
+        body,
+
+      averageBody:
+        avgBody,
 
       multiplier:
         displacementMultiplier
     },
 
-
-    // =================================================
-    // FVG
-    // =================================================
+    // -----------------------------------------------
+    // FAIR VALUE GAP
+    // -----------------------------------------------
 
     fvg: {
-
       status:
-        fvgStatus,
+        relevantFVG
+          ? "RELEVANT FVG DETECTED"
+          : "NO RELEVANT FVG",
 
       detected:
-        bullishFVG ||
-        bearishFVG,
+        !!relevantFVG,
 
       direction:
-        fvgDirection,
+        relevantFVG
+          ? relevantFVG.direction
+          : "NONE",
 
       bullish:
-        bullishFVG,
+        !!(
+          relevantFVG &&
+          relevantFVG.direction ===
+            "BULLISH"
+        ),
 
       bearish:
-        bearishFVG,
+        !!(
+          relevantFVG &&
+          relevantFVG.direction ===
+            "BEARISH"
+        ),
 
       high:
-        fvgHigh,
+        relevantFVG
+          ? relevantFVG.high
+          : null,
 
       low:
-        fvgLow,
+        relevantFVG
+          ? relevantFVG.low
+          : null,
 
       index:
-        fvgIndex,
+        relevantFVG
+          ? relevantFVG.index
+          : null,
 
-      createdTime:
-        fvgCreatedTime,
+      time:
+        relevantFVG
+          ? relevantFVG.time
+          : null,
+
+      invalidated:
+        fvgInvalidated,
 
       retest:
         fvgRetest,
 
       position:
-        fvgPosition,
-
-      invalidated:
-        fvgInvalidated
+        fvgPosition
     },
 
-
-    // =================================================
+    // -----------------------------------------------
     // SETUP
-    // =================================================
+    // -----------------------------------------------
 
     setup: {
-
       status:
         setupStatus,
 
       direction:
-        setupDirection
+        entryDirection,
+
+      bullishSetup,
+
+      bearishSetup,
+
+      fvgRetest,
+
+      fvgInvalidated
     },
 
-
-    // =================================================
+    // -----------------------------------------------
     // ENTRY
-    // =================================================
+    // -----------------------------------------------
 
     entry: {
-
       status:
-        entryStatus,
+        entryConfirmed
+          ? "CONFIRMED"
+          : "WAITING",
 
       direction:
         entryDirection,
 
       confirmed:
-        entryConfirmed
+        entryConfirmed,
+
+      price:
+        entryPrice,
+
+      stopLoss,
+
+      takeProfit1,
+
+      takeProfit2,
+
+      takeProfit3
     },
 
+    // -----------------------------------------------
+    // CONFIRMATION SCORE
+    // -----------------------------------------------
 
-    // =================================================
-    // SCORE
-    // =================================================
+    confirmationScore,
 
-    confirmationScore:
-      score,
+    maxConfirmationScore,
 
-    maxConfirmationScore:
-      7
+    confirmationPercent:
+      Math.round(
+        (
+          confirmationScore /
+          maxConfirmationScore
+        ) * 100
+      )
   };
 }
+
+export {
+  analyzeMarketStructure
+};
