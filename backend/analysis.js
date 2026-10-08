@@ -1,1406 +1,1278 @@
 // ============================================================
-// TRUSTFX MARKET STRUCTURE ENGINE — STAGE 3.6
-// Structure Validation + Entry Safety
+// TRUSTFX MARKET STRUCTURE ENGINE
+// Stage 3.7
 //
-// Sequence:
 // Liquidity Sweep
-//       ↓
-// Matching Displacement
-//       ↓
-// BOS / CHoCH
-//       ↓
-// Matching Fair Value Gap
-//       ↓
-// Later FVG Retest
-//       ↓
-// Entry + Validated Risk Levels
+//      -> Displacement
+//      -> BOS / CHoCH
+//      -> Fair Value Gap
+//      -> Later FVG Retest
+//      -> Confirmed Entry
 //
-// If the full sequence is not confirmed: WAIT
+// Rule-based analysis prototype.
+// Signals require confirmation; profitability is not guaranteed.
 // ============================================================
 
-const n = v =>
-    Number.isFinite(Number(v)) ? Number(v) : 0;
+const ENGINE_NAME = "TRUSTFX Market Structure Engine";
+const ENGINE_VERSION = "1.0";
 
-const t = c =>
-    String(c.datetime || c.time || c.date || "");
+// ------------------------------------------------------------
+// GENERAL HELPERS
+// ------------------------------------------------------------
 
-const o = c => n(c.open);
-const h = c => n(c.high);
-const l = c => n(c.low);
-const cl = c => n(c.close);
-
-const body = c => Math.abs(cl(c) - o(c));
-const range = c => h(c) - l(c);
-
-const uw = c =>
-    h(c) - Math.max(o(c), cl(c));
-
-const lw = c =>
-    Math.min(o(c), cl(c)) - l(c);
-
-const bull = c => cl(c) > o(c);
-const bear = c => cl(c) < o(c);
-
-
-// ============================================================
-// 1. NORMALIZE CANDLE DATA
-// ============================================================
-
-function normalize(raw) {
-    return (Array.isArray(raw) ? raw : [])
-        .map(c => ({
-            ...c,
-            open: o(c),
-            high: h(c),
-            low: l(c),
-            close: cl(c)
-        }))
-        .filter(c =>
-            t(c) &&
-            Number.isFinite(new Date(t(c)).getTime()) &&
-            h(c) >= l(c) &&
-            h(c) >= Math.max(o(c), cl(c)) &&
-            l(c) <= Math.min(o(c), cl(c))
-        )
-        .sort((a, b) =>
-            new Date(t(a)).getTime() -
-            new Date(t(b)).getTime()
-        );
+function number(value) {
+    const result = Number(value);
+    return Number.isFinite(result) ? result : NaN;
 }
 
+function round(value, decimals = 5) {
+    if (!Number.isFinite(value)) return null;
 
-// ============================================================
-// 2. AVERAGE CANDLE BODY
-// ============================================================
+    const factor = Math.pow(10, decimals);
 
-function avgBody(c, i, lookback = 20) {
-    const values = [];
+    return Math.round((value + Number.EPSILON) * factor) / factor;
+}
 
-    for (
-        let k = Math.max(0, i - lookback);
-        k < i;
-        k++
-    ) {
-        values.push(body(c[k]));
+function candleTime(candle) {
+    return (
+        candle.datetime ??
+        candle.time ??
+        candle.timestamp ??
+        null
+    );
+}
+
+function normalizeCandles(input) {
+    if (!Array.isArray(input)) return [];
+
+    const candles = input
+        .map((candle, originalIndex) => ({
+            originalIndex,
+            time: candleTime(candle),
+
+            open: number(candle.open),
+            high: number(candle.high),
+            low: number(candle.low),
+            close: number(candle.close),
+
+            volume: number(candle.volume)
+        }))
+        .filter(candle =>
+            Number.isFinite(candle.open) &&
+            Number.isFinite(candle.high) &&
+            Number.isFinite(candle.low) &&
+            Number.isFinite(candle.close) &&
+            candle.high >= candle.low &&
+            candle.high >= Math.max(candle.open, candle.close) &&
+            candle.low <= Math.min(candle.open, candle.close)
+        );
+
+    // Normalize candle order to oldest -> newest.
+    // Twelve Data normally returns newest candles first.
+    // ISO date/time strings are suitable for chronological sorting.
+    candles.sort((a, b) => {
+        const ta = Date.parse(a.time);
+        const tb = Date.parse(b.time);
+
+        if (Number.isFinite(ta) && Number.isFinite(tb)) {
+            return ta - tb;
+        }
+
+        return a.originalIndex - b.originalIndex;
+    });
+
+    return candles;
+}
+
+function averageBody(candles, endIndex, period = 10) {
+    const start = Math.max(0, endIndex - period);
+    const bodies = [];
+
+    for (let i = start; i < endIndex; i++) {
+        bodies.push(Math.abs(candles[i].close - candles[i].open));
     }
 
-    if (!values.length) return 0;
+    if (bodies.length === 0) return 0;
 
-    return values.reduce((a, b) => a + b, 0)
-        / values.length;
+    return bodies.reduce((sum, value) => sum + value, 0)
+        / bodies.length;
 }
 
+function candleBody(candle) {
+    return Math.abs(candle.close - candle.open);
+}
 
-// ============================================================
-// 3. DETECT CONFIRMED SWING HIGHS AND LOWS
-// ============================================================
+function candleDirection(candle) {
+    if (candle.close > candle.open) return "BULLISH";
+    if (candle.close < candle.open) return "BEARISH";
 
-function swings(c) {
-    const highs = [];
-    const lows = [];
+    return "NEUTRAL";
+}
 
-    for (let i = 2; i < c.length - 2; i++) {
+function isBullish(candle) {
+    return candle.close > candle.open;
+}
+
+function isBearish(candle) {
+    return candle.close < candle.open;
+}
+
+// ------------------------------------------------------------
+// SWING DETECTION
+// ------------------------------------------------------------
+
+function detectSwings(candles, strength = 2) {
+    const swingHighs = [];
+    const swingLows = [];
+
+    for (
+        let i = strength;
+        i < candles.length - strength;
+        i++
+    ) {
+        const current = candles[i];
+
         let isHigh = true;
         let isLow = true;
 
-        for (let k = 1; k <= 2; k++) {
+        for (let j = 1; j <= strength; j++) {
             if (
-                h(c[i]) <= h(c[i - k]) ||
-                h(c[i]) <= h(c[i + k])
+                candles[i - j].high >= current.high ||
+                candles[i + j].high > current.high
             ) {
                 isHigh = false;
             }
 
             if (
-                l(c[i]) >= l(c[i - k]) ||
-                l(c[i]) >= l(c[i + k])
+                candles[i - j].low <= current.low ||
+                candles[i + j].low < current.low
             ) {
                 isLow = false;
             }
         }
 
         if (isHigh) {
-            highs.push({
+            swingHighs.push({
                 index: i,
-                price: h(c[i]),
-                time: t(c[i])
+                time: current.time,
+                price: current.high
             });
         }
 
         if (isLow) {
-            lows.push({
+            swingLows.push({
                 index: i,
-                price: l(c[i]),
-                time: t(c[i])
+                time: current.time,
+                price: current.low
             });
         }
     }
 
-    return { highs, lows };
+    return { swingHighs, swingLows };
 }
 
+// ------------------------------------------------------------
+// MARKET TREND
+// ------------------------------------------------------------
 
-// ============================================================
-// 4. DETERMINE MARKET STRUCTURE
-// ============================================================
+function determineTrend(swings) {
+    const highs = swings.swingHighs;
+    const lows = swings.swingLows;
 
-function structureOf(s) {
-    const hs = s.highs.slice(-2);
-    const ls = s.lows.slice(-2);
-
-    const ph = hs.length === 2
-        ? hs[0].price
-        : null;
-
-    const sh = hs.length
-        ? hs[hs.length - 1].price
-        : null;
-
-    const pl = ls.length === 2
-        ? ls[0].price
-        : null;
-
-    const sl = ls.length
-        ? ls[ls.length - 1].price
-        : null;
-
-    const HH = ph !== null && sh > ph;
-    const LH = ph !== null && sh < ph;
-
-    const HL = pl !== null && sl > pl;
-    const LL = pl !== null && sl < pl;
-
-    let trend = "NEUTRAL";
-    let structure = "UNDEFINED";
-
-    if (HH && HL) {
-        trend = "BULLISH";
-        structure = "HH + HL";
-    } else if (LH && LL) {
-        trend = "BEARISH";
-        structure = "LH + LL";
-    } else if (HH) {
-        trend = "BULLISH";
-        structure = "HH";
-    } else if (HL) {
-        trend = "BULLISH";
-        structure = "HL";
-    } else if (LH) {
-        trend = "BEARISH";
-        structure = "LH";
-    } else if (LL) {
-        trend = "BEARISH";
-        structure = "LL";
+    if (highs.length < 2 || lows.length < 2) {
+        return "NEUTRAL";
     }
 
-    return {
-        trend,
-        structure,
-        HH,
-        HL,
-        LH,
-        LL,
-        sh,
-        sl,
-        ph,
-        pl,
-        lastHigh: hs.at(-1) || null,
-        lastLow: ls.at(-1) || null,
-        highs: s.highs,
-        lows: s.lows
-    };
+    const previousHigh = highs[highs.length - 2].price;
+    const latestHigh = highs[highs.length - 1].price;
+
+    const previousLow = lows[lows.length - 2].price;
+    const latestLow = lows[lows.length - 1].price;
+
+    const lowerHigh = latestHigh < previousHigh;
+    const lowerLow = latestLow < previousLow;
+
+    const higherHigh = latestHigh > previousHigh;
+    const higherLow = latestLow > previousLow;
+
+    if (lowerHigh && lowerLow) return "BEARISH";
+
+    if (higherHigh && higherLow) return "BULLISH";
+
+    return "NEUTRAL";
 }
 
-
-// ============================================================
-// 5. ESTIMATE STRUCTURE BEFORE A PARTICULAR CANDLE
-//
-// A swing needs two candles on its right to be confirmed.
-// We therefore exclude swings that were not yet confirmed
-// before the potential structure-break candle.
-// ============================================================
-
-function trendBefore(s, index) {
-    const confirmedHighs = s.highs.filter(
-        x => x.index <= index - 2
+// Determine the trend using swings confirmed before a candle.
+// This helps classify a break as BOS or CHoCH.
+function trendBefore(candles, swings, index) {
+    const highs = swings.swingHighs.filter(
+        swing => swing.index < index
     );
 
-    const confirmedLows = s.lows.filter(
-        x => x.index <= index - 2
+    const lows = swings.swingLows.filter(
+        swing => swing.index < index
     );
 
-    const hs = confirmedHighs.slice(-2);
-    const ls = confirmedLows.slice(-2);
-
-    const HH =
-        hs.length === 2 &&
-        hs[1].price > hs[0].price;
-
-    const LH =
-        hs.length === 2 &&
-        hs[1].price < hs[0].price;
-
-    const HL =
-        ls.length === 2 &&
-        ls[1].price > ls[0].price;
-
-    const LL =
-        ls.length === 2 &&
-        ls[1].price < ls[0].price;
-
-    if (HH && HL) {
-        return "BULLISH";
+    if (highs.length < 2 || lows.length < 2) {
+        return "NEUTRAL";
     }
 
-    if (LH && LL) {
+    const previousHigh = highs[highs.length - 2].price;
+    const latestHigh = highs[highs.length - 1].price;
+
+    const previousLow = lows[lows.length - 2].price;
+    const latestLow = lows[lows.length - 1].price;
+
+    if (
+        latestHigh < previousHigh &&
+        latestLow < previousLow
+    ) {
         return "BEARISH";
     }
 
-    if (HH || HL) {
+    if (
+        latestHigh > previousHigh &&
+        latestLow > previousLow
+    ) {
         return "BULLISH";
-    }
-
-    if (LH || LL) {
-        return "BEARISH";
     }
 
     return "NEUTRAL";
 }
 
+// ------------------------------------------------------------
+// LIQUIDITY SWEEP DETECTION
+// ------------------------------------------------------------
 
-// ============================================================
-// 6. FIND LIQUIDITY SWEEPS
-//
-// Bullish sweep:
-// Price moves below a previous swing low, then closes back
-// above that liquidity level.
-//
-// Bearish sweep:
-// Price moves above a previous swing high, then closes back
-// below that liquidity level.
-// ============================================================
-
-function findSweeps(c, s) {
-    const out = [];
-
-    const start = Math.max(0, c.length - 35);
-
-    for (let i = start; i < c.length; i++) {
-
-        // SELL-SIDE LIQUIDITY SWEEP = POTENTIAL BUY SETUP
-
-        for (
-            let j = s.lows.length - 1;
-            j >= 0;
-            j--
-        ) {
-            const q = s.lows[j];
-
-            if (q.index >= i) continue;
-
-            if (
-                l(c[i]) < q.price &&
-                cl(c[i]) > q.price
-            ) {
-                const wick = lw(c[i]);
-                const b = body(c[i]);
-
-                out.push({
-                    type: "SELL-SIDE SWEEP",
-                    direction: "BULLISH",
-                    index: i,
-                    time: t(c[i]),
-                    level: q.price,
-
-                    // Actual candle extreme for safer SL.
-                    sweepLow: l(c[i]),
-                    sweepHigh: h(c[i]),
-
-                    wick,
-                    body: b,
-                    range: range(c[i]),
-
-                    rejection:
-                        range(c[i]) > 0 &&
-                        wick >= b * 0.25
-                });
-
-                break;
-            }
-        }
-
-
-        // BUY-SIDE LIQUIDITY SWEEP = POTENTIAL SELL SETUP
-
-        for (
-            let j = s.highs.length - 1;
-            j >= 0;
-            j--
-        ) {
-            const q = s.highs[j];
-
-            if (q.index >= i) continue;
-
-            if (
-                h(c[i]) > q.price &&
-                cl(c[i]) < q.price
-            ) {
-                const wick = uw(c[i]);
-                const b = body(c[i]);
-
-                out.push({
-                    type: "BUY-SIDE SWEEP",
-                    direction: "BEARISH",
-                    index: i,
-                    time: t(c[i]),
-                    level: q.price,
-
-                    // Actual candle extreme for safer SL.
-                    sweepLow: l(c[i]),
-                    sweepHigh: h(c[i]),
-
-                    wick,
-                    body: b,
-                    range: range(c[i]),
-
-                    rejection:
-                        range(c[i]) > 0 &&
-                        wick >= b * 0.25
-                });
-
-                break;
-            }
-        }
+function detectLiquiditySweep(candles, swings, lookback = 35) {
+    if (candles.length < 5) {
+        return null;
     }
 
-    return out.sort((a, b) => a.index - b.index);
-}
+    const lastIndex = candles.length - 1;
+    const startIndex = Math.max(2, lastIndex - lookback);
 
+    // Scan backward so the most recent valid sweep is considered.
+    for (let i = lastIndex; i >= startIndex; i--) {
+        const candle = candles[i];
 
-// ============================================================
-// 7. FIND DISPLACEMENT AFTER A SWEEP
-// ============================================================
-
-function displacementAfter(c, sweep) {
-    for (
-        let i = sweep.index + 1;
-        i <= Math.min(c.length - 1, sweep.index + 10);
-        i++
-    ) {
-        const average = avgBody(c, i);
-        const candleBody = body(c[i]);
-
-        const direction = bull(c[i])
-            ? "BULLISH"
-            : bear(c[i])
-                ? "BEARISH"
-                : "NONE";
-
-        if (
-            average > 0 &&
-            candleBody >= average * 1.2 &&
-            direction === sweep.direction
-        ) {
-            return {
-                detected: true,
-                direction,
-                index: i,
-                time: t(c[i]),
-                candleBody,
-                averageBody: average,
-                threshold: average * 1.2,
-                linkedSweep: sweep
-            };
-        }
-    }
-
-    return null;
-}
-
-
-// ============================================================
-// 8. VALIDATE BOS OR CHoCH
-//
-// BOS:
-// Break in the same direction as the structure before the break.
-//
-// CHoCH:
-// Break against the structure before the break.
-//
-// NEUTRAL:
-// If prior structure is unclear, the break is not automatically
-// labelled BOS or CHoCH.
-// ============================================================
-
-function breakAfter(c, s, displacement) {
-    const direction = displacement.direction;
-
-    for (
-        let i = displacement.index;
-        i <= Math.min(
-            c.length - 1,
-            displacement.index + 10
+        const priorHighs = swings.swingHighs.filter(
+            swing => swing.index < i
         );
-        i++
-    ) {
-        const previousTrend = trendBefore(s, i);
 
-        if (direction === "BULLISH") {
-            const previousHighs = s.highs.filter(
-                x => x.index <= i - 2
-            );
-
-            const level = previousHighs.at(-1);
-
-            if (!level || cl(c[i]) <= level.price) {
-                continue;
-            }
-
-            let bos = false;
-            let choch = false;
-
-            if (previousTrend === "BULLISH") {
-                bos = true;
-            } else if (previousTrend === "BEARISH") {
-                choch = true;
-            }
-
-            return {
-                detected: true,
-                index: i,
-                time: t(c[i]),
-                direction,
-                previousTrend,
-                bos,
-                bosDirection: bos ? direction : "NONE",
-                choch,
-                chochDirection: choch ? direction : "NONE",
-                brokenLevel: level.price,
-                brokenLevelTime: level.time
-            };
-        }
-
-
-        if (direction === "BEARISH") {
-            const previousLows = s.lows.filter(
-                x => x.index <= i - 2
-            );
-
-            const level = previousLows.at(-1);
-
-            if (!level || cl(c[i]) >= level.price) {
-                continue;
-            }
-
-            let bos = false;
-            let choch = false;
-
-            if (previousTrend === "BEARISH") {
-                bos = true;
-            } else if (previousTrend === "BULLISH") {
-                choch = true;
-            }
-
-            return {
-                detected: true,
-                index: i,
-                time: t(c[i]),
-                direction,
-                previousTrend,
-                bos,
-                bosDirection: bos ? direction : "NONE",
-                choch,
-                chochDirection: choch ? direction : "NONE",
-                brokenLevel: level.price,
-                brokenLevelTime: level.time
-            };
-        }
-    }
-
-    return null;
-}
-
-
-// ============================================================
-// 9. FIND A FAIR VALUE GAP
-//
-// Bullish FVG: current candle low is above the high two
-// candles earlier.
-//
-// Bearish FVG: current candle high is below the low two
-// candles earlier.
-// ============================================================
-
-function fvgAfter(c, displacement) {
-    for (
-        let i = Math.max(2, displacement.index);
-        i <= Math.min(
-            c.length - 1,
-            displacement.index + 5
+        const priorLows = swings.swingLows.filter(
+            swing => swing.index < i
         );
-        i++
-    ) {
+
+        const latestHigh = priorHighs.length
+            ? priorHighs[priorHighs.length - 1]
+            : null;
+
+        const latestLow = priorLows.length
+            ? priorLows[priorLows.length - 1]
+            : null;
+
+        // Bullish sweep:
+        // Price runs below a prior swing low and closes back above it.
         if (
-            displacement.direction === "BULLISH" &&
-            l(c[i]) > h(c[i - 2])
+            latestLow &&
+            candle.low < latestLow.price &&
+            candle.close > latestLow.price
         ) {
             return {
                 detected: true,
                 direction: "BULLISH",
-                bullish: true,
-                bearish: false,
-                high: l(c[i]),
-                low: h(c[i - 2]),
+                type: "SELL_SIDE_SWEEP",
+
                 index: i,
-                time: t(c[i])
+                time: candle.time,
+
+                liquidityLevel: latestLow.price,
+
+                sweepLow: candle.low,
+                sweepHigh: candle.high,
+
+                rejection: true,
+                lowSweep: true,
+                highSweep: false
             };
         }
 
+        // Bearish sweep:
+        // Price runs above a prior swing high and closes back below it.
         if (
-            displacement.direction === "BEARISH" &&
-            h(c[i]) < l(c[i - 2])
+            latestHigh &&
+            candle.high > latestHigh.price &&
+            candle.close < latestHigh.price
         ) {
             return {
                 detected: true,
                 direction: "BEARISH",
-                bullish: false,
-                bearish: true,
-                high: l(c[i - 2]),
-                low: h(c[i]),
+                type: "BUY_SIDE_SWEEP",
+
                 index: i,
-                time: t(c[i])
+                time: candle.time,
+
+                liquidityLevel: latestHigh.price,
+
+                sweepLow: candle.low,
+                sweepHigh: candle.high,
+
+                rejection: true,
+                lowSweep: false,
+                highSweep: true
             };
         }
     }
 
+    return null;
+}
+
+// ------------------------------------------------------------
+// DISPLACEMENT DETECTION
+// ------------------------------------------------------------
+
+function detectDisplacement(
+    candles,
+    sweep,
+    lookahead = 10
+) {
+    if (!sweep) return null;
+
+    const endIndex = Math.min(
+        candles.length - 1,
+        sweep.index + lookahead
+    );
+
+    // Find the first strong candle in the sweep direction.
+    for (
+        let i = sweep.index + 1;
+        i <= endIndex;
+        i++
+    ) {
+        const candle = candles[i];
+
+        const avgBody = averageBody(candles, i, 10);
+
+        if (avgBody <= 0) continue;
+
+        const body = candleBody(candle);
+        const threshold = avgBody * 1.2;
+
+        const bullishDisplacement =
+            sweep.direction === "BULLISH" &&
+            isBullish(candle) &&
+            body >= threshold;
+
+        const bearishDisplacement =
+            sweep.direction === "BEARISH" &&
+            isBearish(candle) &&
+            body >= threshold;
+
+        if (bullishDisplacement || bearishDisplacement) {
+            return {
+                detected: true,
+
+                direction: sweep.direction,
+
+                index: i,
+                time: candle.time,
+
+                body,
+                averageBody: avgBody,
+                threshold,
+
+                linkedToSweep: true
+            };
+        }
+    }
+
+    return null;
+}
+
+// ------------------------------------------------------------
+// BOS / CHoCH
+// ------------------------------------------------------------
+
+function detectStructureBreak(
+    candles,
+    swings,
+    sweep,
+    displacement
+) {
+    if (!sweep || !displacement) return null;
+
+    const direction = sweep.direction;
+
+    const breakIndex = displacement.index;
+
+    const previousTrend = trendBefore(
+        candles,
+        swings,
+        breakIndex
+    );
+
+    const candidateSwings = direction === "BULLISH"
+        ? swings.swingHighs
+        : swings.swingLows;
+
+    const eligibleSwings = candidateSwings.filter(
+        swing =>
+            swing.index < breakIndex &&
+            swing.index > sweep.index - 40
+    );
+
+    if (eligibleSwings.length === 0) {
+        return null;
+    }
+
+    const levelSwing =
+        eligibleSwings[eligibleSwings.length - 1];
+
+    const candle = candles[breakIndex];
+
+    const broken = direction === "BULLISH"
+        ? candle.close > levelSwing.price
+        : candle.close < levelSwing.price;
+
+    if (!broken) return null;
+
+    let bos = false;
+    let choch = false;
+
+    if (previousTrend === direction) {
+        bos = true;
+    } else if (
+        previousTrend !== "NEUTRAL" &&
+        previousTrend !== direction
+    ) {
+        choch = true;
+    } else {
+        // Do not classify a break as BOS or CHoCH if
+        // the preceding trend cannot be determined.
+        return null;
+    }
+
     return {
-        detected: false,
-        direction: "NONE",
-        bullish: false,
-        bearish: false,
-        high: null,
-        low: null,
-        index: null,
-        time: null
+        detected: true,
+
+        bos,
+        choch,
+
+        direction,
+        previousTrend,
+
+        index: breakIndex,
+        time: candle.time,
+
+        brokenLevel: levelSwing.price
     };
 }
 
+// ------------------------------------------------------------
+// FAIR VALUE GAP DETECTION
+// ------------------------------------------------------------
 
-// ============================================================
-// 10. CHECK WHETHER THE FVG HAS BEEN INVALIDATED
-// ============================================================
+function detectFVGs(
+    candles,
+    displacement,
+    structureBreak
+) {
+    if (!displacement || !structureBreak) return [];
 
-function invalidatedAfter(c, fvg) {
-    if (!fvg.detected) return false;
+    const gaps = [];
+    const direction = displacement.direction;
 
+    // Use a three-candle gap.
+    // The third candle must occur after the displacement candle.
     for (
-        let i = fvg.index + 1;
-        i < c.length;
+        let i = Math.max(2, displacement.index);
+        i < candles.length;
         i++
     ) {
+        if (i <= structureBreak.index) continue;
+
+        const first = candles[i - 2];
+        const middle = candles[i - 1];
+        const third = candles[i];
+
+        if (direction === "BULLISH") {
+            // Bullish FVG: first candle high is below
+            // the third candle low.
+            if (first.high < third.low) {
+                gaps.push({
+                    detected: true,
+                    direction: "BULLISH",
+
+                    high: third.low,
+                    low: first.high,
+
+                    index: i,
+                    time: third.time
+                });
+            }
+        }
+
+        if (direction === "BEARISH") {
+            // Bearish FVG: first candle low is above
+            // the third candle high.
+            if (first.low > third.high) {
+                gaps.push({
+                    detected: true,
+                    direction: "BEARISH",
+
+                    high: first.low,
+                    low: third.high,
+
+                    index: i,
+                    time: third.time
+                });
+            }
+        }
+    }
+
+    return gaps;
+}
+
+// ------------------------------------------------------------
+// FVG INVALIDATION AND RETEST
+// ------------------------------------------------------------
+
+function analyzeFVG(candles, fvg) {
+    if (!fvg) return null;
+
+    let invalidated = false;
+    let firstRetestIndex = null;
+    let latestRetestIndex = null;
+
+    const lastIndex = candles.length - 1;
+
+    // Inspect candles after the FVG forms.
+    for (
+        let i = fvg.index + 1;
+        i <= lastIndex;
+        i++
+    ) {
+        const candle = candles[i];
+
+        // A bullish FVG is invalidated when price closes
+        // below the bottom of the gap.
+        //
+        // A bearish FVG is invalidated when price closes
+        // above the top of the gap.
         if (
             fvg.direction === "BULLISH" &&
-            cl(c[i]) < fvg.low
+            candle.close < fvg.low
         ) {
-            return true;
+            invalidated = true;
+            break;
         }
 
         if (
             fvg.direction === "BEARISH" &&
-            cl(c[i]) > fvg.high
+            candle.close > fvg.high
         ) {
-            return true;
+            invalidated = true;
+            break;
+        }
+
+        // A candle retests the zone when its range overlaps
+        // the FVG price range.
+        const overlapsZone =
+            candle.low <= fvg.high &&
+            candle.high >= fvg.low;
+
+        if (overlapsZone) {
+            if (firstRetestIndex === null) {
+                firstRetestIndex = i;
+            }
+
+            // Keep scanning: this is important for Stage 3.7.
+            // We retain the latest retest instead of stopping
+            // at the first historical touch.
+            latestRetestIndex = i;
         }
     }
 
-    return false;
-}
+    const currentCandle = candles[lastIndex];
 
+    const currentOverlaps =
+        currentCandle &&
+        lastIndex > fvg.index &&
+        currentCandle.low <= fvg.high &&
+        currentCandle.high >= fvg.low;
 
-// ============================================================
-// 11. FIND A LATER FVG RETEST
-//
-// The retest must happen after BOTH the FVG and the structure
-// break. A candle that creates the FVG cannot also count as
-// its later retest.
-// ============================================================
+    const currentDirectionAgrees =
+        fvg.direction === "BULLISH"
+            ? isBullish(currentCandle)
+            : isBearish(currentCandle);
 
-function retestAfter(c, fvg, structureBreak, invalidated) {
-    if (
-        !fvg.detected ||
-        !structureBreak ||
-        invalidated
-    ) {
-        return {
-            retest: false,
-            index: null,
-            time: null,
-            position: "NONE"
-        };
-    }
+    const currentRetest =
+        !invalidated &&
+        currentOverlaps &&
+        currentDirectionAgrees;
 
-    const start = Math.max(
-        fvg.index + 1,
-        structureBreak.index + 1
-    );
+    let position = "OUTSIDE";
 
-    for (let i = start; i < c.length; i++) {
-        const touchesZone =
-            l(c[i]) <= fvg.high &&
-            h(c[i]) >= fvg.low;
-
-        if (!touchesZone) continue;
-
-        return {
-            retest: true,
-            index: i,
-            time: t(c[i]),
-            position:
-                cl(c[i]) > fvg.high
-                    ? "ABOVE"
-                    : cl(c[i]) < fvg.low
-                        ? "BELOW"
-                        : "INSIDE"
-        };
+    if (currentCandle) {
+        if (currentCandle.close > fvg.high) {
+            position = "ABOVE";
+        } else if (currentCandle.close < fvg.low) {
+            position = "BELOW";
+        } else {
+            position = "INSIDE";
+        }
     }
 
     return {
-        retest: false,
-        index: null,
-        time: null,
-        position: "OUTSIDE"
+        detected: true,
+
+        direction: fvg.direction,
+
+        high: fvg.high,
+        low: fvg.low,
+
+        index: fvg.index,
+        time: fvg.time,
+
+        invalidated,
+
+        retest: latestRetestIndex !== null,
+        firstRetestIndex,
+        latestRetestIndex,
+
+        currentRetest,
+
+        position
     };
 }
 
+// ------------------------------------------------------------
+// ENTRY AND RISK CALCULATIONS
+// ------------------------------------------------------------
 
-// ============================================================
-// 12. CALCULATE AND VALIDATE RISK LEVELS
-//
-// BUY:
-// SL below the actual sweep candle low.
-//
-// SELL:
-// SL above the actual sweep candle high.
-//
-// TP1 = 1.5R
-// TP2 = 2R
-// TP3 = 3R
-// ============================================================
-
-function risk(direction, entry, sweep) {
-    const empty = {
-        valid: false,
-        reason: "Risk levels not available",
-        stopLoss: null,
-        takeProfit1: null,
-        takeProfit2: null,
-        takeProfit3: null,
-        riskDistance: null,
-        riskReward: null
-    };
-
-    if (!sweep || !Number.isFinite(entry)) {
-        return empty;
+function calculateTrade(sweep, displacement, fvg, candles) {
+    if (!sweep || !displacement || !fvg) {
+        return null;
     }
 
-    // Small price buffer. This is a price-based buffer,
-    // not a substitute for broker tick-size validation.
-    const buffer = entry >= 100
+    const current = candles[candles.length - 1];
+
+    if (!current) return null;
+
+    if (fvg.invalidated || !fvg.currentRetest) {
+        return null;
+    }
+
+    if (sweep.direction !== displacement.direction) {
+        return null;
+    }
+
+    if (sweep.direction !== fvg.direction) {
+        return null;
+    }
+
+    const entry = current.close;
+
+    // A stop belongs beyond the actual sweep extreme.
+    // The small buffer is provisional and should be calibrated
+    // to the instrument's tick size and broker specifications.
+    const buffer = Math.abs(entry) >= 100
         ? 0.10
         : 0.0001;
 
     let stopLoss;
+    let riskDistance;
 
-    if (direction === "BUY") {
+    if (sweep.direction === "BULLISH") {
         stopLoss = sweep.sweepLow - buffer;
-    } else if (direction === "SELL") {
-        stopLoss = sweep.sweepHigh + buffer;
+        riskDistance = entry - stopLoss;
     } else {
-        return {
-            ...empty,
-            reason: "Direction is not BUY or SELL"
-        };
+        stopLoss = sweep.sweepHigh + buffer;
+        riskDistance = stopLoss - entry;
     }
 
-    const distance = Math.abs(entry - stopLoss);
-
+    // Reject invalid or excessively small risk distances.
     if (
-        distance <= 0 ||
-        !Number.isFinite(distance) ||
-        (direction === "BUY" && stopLoss >= entry) ||
-        (direction === "SELL" && stopLoss <= entry)
+        !Number.isFinite(riskDistance) ||
+        riskDistance <= 0
     ) {
-        return {
-            ...empty,
-            reason: "Stop loss is on the wrong side of entry"
-        };
+        return null;
     }
 
-    const sign = direction === "BUY" ? 1 : -1;
+    const takeProfit1 = sweep.direction === "BULLISH"
+        ? entry + riskDistance * 1.5
+        : entry - riskDistance * 1.5;
 
-    const takeProfit1 = entry + sign * distance * 1.5;
-    const takeProfit2 = entry + sign * distance * 2;
-    const takeProfit3 = entry + sign * distance * 3;
+    const takeProfit2 = sweep.direction === "BULLISH"
+        ? entry + riskDistance * 2
+        : entry - riskDistance * 2;
 
-    if (
-        !Number.isFinite(takeProfit1) ||
-        !Number.isFinite(takeProfit2) ||
-        !Number.isFinite(takeProfit3)
-    ) {
-        return {
-            ...empty,
-            reason: "Take-profit calculation failed"
-        };
-    }
+    const takeProfit3 = sweep.direction === "BULLISH"
+        ? entry + riskDistance * 3
+        : entry - riskDistance * 3;
 
     return {
-        valid: true,
-        reason: null,
-        stopLoss,
-        takeProfit1,
-        takeProfit2,
-        takeProfit3,
-        riskDistance: distance,
-        riskReward: "1:1.5 / 1:2 / 1:3"
+        confirmed: true,
+
+        direction: sweep.direction,
+        signal: sweep.direction === "BULLISH" ? "BUY" : "SELL",
+
+        price: round(entry),
+        stopLoss: round(stopLoss),
+
+        takeProfit1: round(takeProfit1),
+        takeProfit2: round(takeProfit2),
+        takeProfit3: round(takeProfit3),
+
+        riskDistance: round(riskDistance),
+
+        riskReward: {
+            tp1: 1.5,
+            tp2: 2,
+            tp3: 3
+        },
+
+        fvgHigh: round(fvg.high),
+        fvgLow: round(fvg.low),
+
+        sweepTime: sweep.time,
+        displacementTime: displacement.time,
+        fvgTime: fvg.time
     };
 }
 
+// ------------------------------------------------------------
+// MAIN ANALYSIS FUNCTION
+// ------------------------------------------------------------
 
-// ============================================================
-// 13. MAIN MARKET STRUCTURE ANALYSIS
-// ============================================================
+export function analyzeMarketStructure(inputCandles, options = {}) {
+    const candles = normalizeCandles(inputCandles);
 
-export function analyzeMarketStructure(rawCandles) {
-    const c = normalize(rawCandles);
+    const symbol = options.symbol ?? "UNKNOWN";
+    const interval = options.interval ?? "15min";
 
-    if (c.length < 30) {
+    if (candles.length < 20) {
         return {
-            status: "INSUFFICIENT_DATA",
-            message: "Not enough candles for market structure analysis.",
-            candleCount: c.length
+            status: "WAIT",
+            engine: ENGINE_NAME,
+            version: ENGINE_VERSION,
+
+            symbol,
+            interval,
+
+            candleCount: candles.length,
+
+            error: "Insufficient valid candles for analysis.",
+
+            analysis: {
+                status: "WAIT",
+                reason: "At least 20 valid candles are required."
+            }
         };
     }
 
-    const cur = c.at(-1);
-    const price = cl(cur);
+    const lastIndex = candles.length - 1;
+    const current = candles[lastIndex];
 
-    const s = swings(c);
-    const st = structureOf(s);
-    const events = findSweeps(c, s);
+    const swings = detectSwings(candles, 2);
 
-    let chain = null;
+    const trend = determineTrend(swings);
 
+    const swingHighs = swings.swingHighs;
+    const swingLows = swings.swingLows;
 
-    // --------------------------------------------------------
-    // Find the newest complete chronological setup.
-    // --------------------------------------------------------
+    const latestSwingHigh = swingHighs.length
+        ? swingHighs[swingHighs.length - 1]
+        : null;
 
-    for (
-        let k = events.length - 1;
-        k >= 0;
-        k--
-    ) {
-        const sweep = events[k];
+    const previousSwingHigh = swingHighs.length >= 2
+        ? swingHighs[swingHighs.length - 2]
+        : null;
 
-        if (!sweep.rejection) continue;
+    const latestSwingLow = swingLows.length
+        ? swingLows[swingLows.length - 1]
+        : null;
 
-        const displacement = displacementAfter(c, sweep);
+    const previousSwingLow = swingLows.length >= 2
+        ? swingLows[swingLows.length - 2]
+        : null;
 
-        if (
-            !displacement ||
-            displacement.direction !== sweep.direction ||
-            displacement.index <= sweep.index
-        ) {
-            continue;
-        }
+    const lowerHigh = Boolean(
+        latestSwingHigh &&
+        previousSwingHigh &&
+        latestSwingHigh.price < previousSwingHigh.price
+    );
 
-        const structureBreak = breakAfter(
-            c,
-            s,
+    const lowerLow = Boolean(
+        latestSwingLow &&
+        previousSwingLow &&
+        latestSwingLow.price < previousSwingLow.price
+    );
+
+    const higherHigh = Boolean(
+        latestSwingHigh &&
+        previousSwingHigh &&
+        latestSwingHigh.price > previousSwingHigh.price
+    );
+
+    const higherLow = Boolean(
+        latestSwingLow &&
+        previousSwingLow &&
+        latestSwingLow.price > previousSwingLow.price
+    );
+
+    const sweep = detectLiquiditySweep(candles, swings);
+
+    const displacement = sweep
+        ? detectDisplacement(candles, sweep)
+        : null;
+
+    const structureBreak = sweep && displacement
+        ? detectStructureBreak(
+            candles,
+            swings,
+            sweep,
             displacement
-        );
+        )
+        : null;
 
-        if (
-            !structureBreak ||
-            structureBreak.direction !== sweep.direction ||
-            structureBreak.index < displacement.index
-        ) {
+    const fvgs = structureBreak
+        ? detectFVGs(candles, displacement, structureBreak)
+        : [];
+
+    // Stage 3.7:
+    // Evaluate candidate gaps from newest to oldest.
+    // Do not stop merely because an earlier FVG was retested.
+    let selectedFVG = null;
+    let selectedFVGAnalysis = null;
+
+    for (let i = fvgs.length - 1; i >= 0; i--) {
+        const candidate = analyzeFVG(candles, fvgs[i]);
+
+        if (!candidate || candidate.invalidated) {
             continue;
         }
 
-        // Require a classified break.
-        // Unclear prior structure must not silently count as BOS.
-        if (
-            !structureBreak.bos &&
-            !structureBreak.choch
-        ) {
-            continue;
+        selectedFVG = fvgs[i];
+        selectedFVGAnalysis = candidate;
+
+        // Prefer a current-candle retest.
+        if (candidate.currentRetest) {
+            break;
         }
+    }
 
-        const fvg = fvgAfter(c, displacement);
+    const fvg = selectedFVGAnalysis;
 
-        if (
-            !fvg.detected ||
-            fvg.direction !== sweep.direction ||
-            fvg.index < displacement.index
-        ) {
-            continue;
-        }
+    const sequenceDirection = sweep?.direction ?? "NONE";
 
-        const invalidated = invalidatedAfter(c, fvg);
+    const sweepConfirmed = Boolean(sweep);
 
-        const retest = retestAfter(
-            c,
-            fvg,
-            structureBreak,
-            invalidated
-        );
+    const displacementConfirmed = Boolean(
+        sweep &&
+        displacement &&
+        displacement.direction === sweep.direction
+    );
 
-        chain = {
+    const structureBreakConfirmed = Boolean(
+        structureBreak &&
+        (structureBreak.bos || structureBreak.choch) &&
+        structureBreak.direction === sequenceDirection
+    );
+
+    const fvgConfirmed = Boolean(
+        selectedFVG &&
+        fvg &&
+        fvg.direction === sequenceDirection
+    );
+
+    const fvgRetest = Boolean(
+        fvg &&
+        fvg.currentRetest
+    );
+
+    const fvgInvalidated = Boolean(
+        fvg &&
+        fvg.invalidated
+    );
+
+    const trade = (
+        sweepConfirmed &&
+        displacementConfirmed &&
+        structureBreakConfirmed &&
+        fvgConfirmed &&
+        fvgRetest &&
+        !fvgInvalidated
+    )
+        ? calculateTrade(
             sweep,
             displacement,
-            structureBreak,
             fvg,
-            invalidated,
-            retest,
-            validOrder: true
-        };
-
-        break;
-    }
-
-
-    // --------------------------------------------------------
-    // Build diagnostic output even if setup is incomplete.
-    // --------------------------------------------------------
-
-    const sweep =
-        chain?.sweep ||
-        events.at(-1) ||
-        null;
-
-    const displacement =
-        chain?.displacement ||
-        (
-            sweep && sweep.rejection
-                ? displacementAfter(c, sweep)
-                : null
-        );
-
-    const structureBreak =
-        chain?.structureBreak ||
-        (
-            displacement
-                ? breakAfter(c, s, displacement)
-                : null
-        );
-
-    const fvg =
-        chain?.fvg ||
-        (
-            displacement
-                ? fvgAfter(c, displacement)
-                : {
-                    detected: false,
-                    direction: "NONE",
-                    bullish: false,
-                    bearish: false,
-                    high: null,
-                    low: null,
-                    index: null,
-                    time: null
-                }
-        );
-
-    const invalidated =
-        chain?.invalidated ??
-        invalidatedAfter(c, fvg);
-
-    const retest =
-        chain?.retest ||
-        retestAfter(
-            c,
-            fvg,
-            structureBreak,
-            invalidated
-        );
-
-    const disp = displacement || {
-        detected: false,
-        direction: "NONE",
-        index: null,
-        time: null,
-        candleBody: 0,
-        averageBody: 0,
-        threshold: 0,
-        linkedSweep: null
-    };
-
-    const br = structureBreak || {
-        detected: false,
-        direction: "NONE",
-        index: null,
-        time: null,
-        previousTrend: "NEUTRAL",
-        bos: false,
-        bosDirection: "NONE",
-        choch: false,
-        chochDirection: "NONE",
-        brokenLevel: null,
-        brokenLevelTime: null
-    };
-
-
-    // --------------------------------------------------------
-    // Validate entry direction and complete setup.
-    // --------------------------------------------------------
-
-    const direction = sweep?.direction || "NONE";
-
-    const entryDirection =
-        direction === "BULLISH"
-            ? "BUY"
-            : direction === "BEARISH"
-                ? "SELL"
-                : "NONE";
-
-    const currentRetest = Boolean(
-        retest.retest &&
-        retest.index === c.length - 1
-    );
-
-    const candleAgrees =
-        entryDirection === "BUY"
-            ? bull(cur)
-            : entryDirection === "SELL"
-                ? bear(cur)
-                : false;
-
-    const sequenceDirectionsAgree = Boolean(
-        sweep &&
-        displacement &&
-        structureBreak &&
-        fvg.detected &&
-        sweep.direction === displacement.direction &&
-        displacement.direction === structureBreak.direction &&
-        structureBreak.direction === fvg.direction
-    );
-
-    const chronologicalOrder = Boolean(
-        sweep &&
-        displacement &&
-        structureBreak &&
-        fvg.detected &&
-        sweep.index < displacement.index &&
-        displacement.index <= structureBreak.index &&
-        structureBreak.index <= fvg.index &&
-        fvg.index < (retest.index ?? Infinity)
-    );
-
-    const structureClassified = Boolean(
-        br.bos || br.choch
-    );
-
-    const entryCandidate = Boolean(
-        chain &&
-        !invalidated &&
-        currentRetest &&
-        candleAgrees &&
-        sequenceDirectionsAgree &&
-        chronologicalOrder &&
-        structureClassified
-    );
-
-    const candidateRisk = entryCandidate
-        ? risk(entryDirection, price, sweep)
-        : {
-            valid: false,
-            reason: "Entry has not been confirmed",
-            stopLoss: null,
-            takeProfit1: null,
-            takeProfit2: null,
-            takeProfit3: null,
-            riskDistance: null,
-            riskReward: null
-        };
-
-    // An entry is confirmed only if the risk calculation passes.
-    const confirmed = Boolean(
-        entryCandidate &&
-        candidateRisk.valid
-    );
-
-    const levels = confirmed
-        ? candidateRisk
-        : {
-            stopLoss: null,
-            takeProfit1: null,
-            takeProfit2: null,
-            takeProfit3: null,
-            riskDistance: null,
-            riskReward: null
-        };
-
-
-    // --------------------------------------------------------
-    // Confirmation score.
-    // A high score alone does not trigger an entry.
-    // --------------------------------------------------------
-
-    const checks = [
-        Boolean(sweep?.rejection),
-
-        Boolean(
-            sweep &&
-            displacement &&
-            displacement.index > sweep.index &&
-            displacement.direction === direction
-        ),
-
-        Boolean(
-            structureBreak &&
-            structureBreak.direction === direction &&
-            (br.bos || br.choch)
-        ),
-
-        Boolean(
-            fvg.detected &&
-            fvg.direction === direction
-        ),
-
-        Boolean(
-            fvg.detected &&
-            !invalidated
-        ),
-
-        currentRetest,
-
-        confirmed,
-
-        Boolean(
-            chain &&
-            chronologicalOrder &&
-            sequenceDirectionsAgree
+            candles
         )
+        : null;
+
+    const entryConfirmed = Boolean(trade?.confirmed);
+
+    const confirmations = [
+        sweepConfirmed,
+        displacementConfirmed,
+        structureBreakConfirmed,
+        fvgConfirmed,
+        fvgRetest,
+        !fvgInvalidated,
+        Boolean(sweep && displacement &&
+            sweep.direction === displacement.direction),
+        Boolean(structureBreak &&
+            structureBreak.direction === sequenceDirection)
     ];
 
-    const score = checks.filter(Boolean).length;
+    const confirmationScore = confirmations.filter(Boolean).length;
 
+    let invalidReason = null;
 
-    // --------------------------------------------------------
-    // Explain why the engine is waiting.
-    // --------------------------------------------------------
-
-    let reason = null;
-
-    if (!confirmed) {
-        if (!sweep) {
-            reason = "No liquidity sweep found";
-        } else if (!sweep.rejection) {
-            reason = "Sweep did not meet rejection rule";
-        } else if (!displacement) {
-            reason = "No matching displacement after sweep";
-        } else if (!structureBreak) {
-            reason = "No matching BOS/CHoCH after displacement";
-        } else if (!structureClassified) {
-            reason = "Structure break is not classified";
-        } else if (!fvg.detected) {
-            reason = "No matching FVG after displacement";
-        } else if (!sequenceDirectionsAgree) {
-            reason = "Setup directions do not agree";
-        } else if (invalidated) {
-            reason = "FVG has been invalidated";
-        } else if (!chronologicalOrder) {
-            reason = "Setup sequence is not in valid chronological order";
-        } else if (!currentRetest) {
-            reason = "Waiting for a later FVG retest candle";
-        } else if (!candleAgrees) {
-            reason = "Retest candle does not confirm entry direction";
-        } else if (!candidateRisk.valid) {
-            reason = candidateRisk.reason;
-        } else {
-            reason = "Complete setup not confirmed";
-        }
+    if (!sweepConfirmed) {
+        invalidReason = "No confirmed liquidity sweep.";
+    } else if (!displacementConfirmed) {
+        invalidReason = "Waiting for displacement in the sweep direction.";
+    } else if (!structureBreakConfirmed) {
+        invalidReason = "Waiting for a valid BOS or CHoCH.";
+    } else if (!fvgConfirmed) {
+        invalidReason = "Waiting for a valid directional FVG.";
+    } else if (fvgInvalidated) {
+        invalidReason = "The FVG has been invalidated.";
+    } else if (!fvgRetest) {
+        invalidReason = "Waiting for a later FVG retest candle.";
+    } else if (!entryConfirmed) {
+        invalidReason = "Entry failed risk or direction validation.";
     }
 
+    const entryStatus = entryConfirmed
+        ? trade.signal
+        : "WAIT";
 
-    // --------------------------------------------------------
-    // FINAL RESPONSE
-    // Keep the existing API output structure compatible.
-    // --------------------------------------------------------
+    const candleRange = current.high - current.low;
 
-    return {
-        status: confirmed ? entryDirection : "WAIT",
-
-        candleOrder: "ASCENDING",
-        candleCount: c.length,
-
-        trend: st.trend,
-        structure: st.structure,
-
-        bos: br.bos,
-        bosDirection: br.bosDirection,
-
-        choch: br.choch,
-        chochDirection: br.chochDirection,
-
-        currentPrice: price,
-
-        swingHigh: st.sh,
-        swingLow: st.sl,
-
-        previousSwingHigh: st.ph,
-        previousSwingLow: st.pl,
-
-        higherHigh: st.HH,
-        higherLow: st.HL,
-        lowerHigh: st.LH,
-        lowerLow: st.LL,
-
-        lastSwingHighTime: st.lastHigh?.time || null,
-        lastSwingLowTime: st.lastLow?.time || null,
-
-
-        liquidity: {
-            status: sweep
-                ? (
-                    direction === "BULLISH"
-                        ? "CONFIRMED SELL-SIDE SWEEP"
-                        : "CONFIRMED BUY-SIDE SWEEP"
-                )
-                : "NO SWEEP",
-
-            buySideLiquidity: st.sh,
-            sellSideLiquidity: st.sl,
-
-            previousBuySideLiquidity: st.ph,
-            previousSellSideLiquidity: st.pl,
-
-            sweep: Boolean(sweep),
-            sweepDirection: direction,
-
-            rejection: Boolean(sweep?.rejection),
-            rejectionDirection: direction,
-
-            highSweep: direction === "BEARISH",
-            lowSweep: direction === "BULLISH",
-
-            bearishRejection: Boolean(
-                direction === "BEARISH" &&
-                sweep?.rejection
-            ),
-
-            bullishRejection: Boolean(
-                direction === "BULLISH" &&
-                sweep?.rejection
-            ),
-
-            upperWick: uw(cur),
-            lowerWick: lw(cur),
-            candleRange: range(cur),
-            candleBody: body(cur)
-        },
-
-
-        displacement: {
-            status: disp.detected
-                ? "DISPLACEMENT DETECTED"
-                : "NO DISPLACEMENT",
-
-            detected: disp.detected,
-            direction: disp.direction,
-            time: disp.time,
-            index: disp.index,
-
-            candleBody: disp.candleBody,
-            averageBody: disp.averageBody,
-            threshold: disp.threshold,
-
-            multiplier: 1.2,
-
-            linkedToSweep: Boolean(
-                disp.linkedSweep &&
-                sweep &&
-                disp.linkedSweep.index === sweep.index &&
-                disp.index > sweep.index
-            )
-        },
-
-
-        fvg: {
-            status: fvg.detected
-                ? "RELEVANT FVG DETECTED"
-                : "NO RELEVANT FVG",
-
-            detected: fvg.detected,
-            direction: fvg.direction,
-
-            bullish: fvg.bullish,
-            bearish: fvg.bearish,
-
-            high: fvg.high,
-            low: fvg.low,
-
-            index: fvg.index,
-            time: fvg.time,
-
-            invalidated,
-            retest: currentRetest,
-            position: retest.position
-        },
-
-
-        setup: {
-            status: confirmed
-                ? "CONFIRMED"
-                : "WAITING",
-
-            direction: confirmed
-                ? entryDirection
-                : "NONE",
-
-            bullishSetup: confirmed &&
-                entryDirection === "BUY",
-
-            bearishSetup: confirmed &&
-                entryDirection === "SELL",
-
-            sweepConfirmed: Boolean(
-                sweep?.rejection
-            ),
-
-            displacementConfirmed: Boolean(
-                sweep &&
-                displacement &&
-                displacement.direction === direction &&
-                displacement.index > sweep.index
-            ),
-
-            structureBreakConfirmed: Boolean(
-                structureBreak &&
-                structureBreak.direction === direction &&
-                (br.bos || br.choch)
-            ),
-
-            fvgRetest: currentRetest,
-            fvgInvalidated: invalidated
-        },
-
-
-        entry: {
-            status: confirmed
-                ? "CONFIRMED"
-                : "WAITING",
-
-            direction: confirmed
-                ? entryDirection
-                : "NONE",
-
-            confirmed,
-
-            price: confirmed ? price : null,
-
-            ...levels
-        },
-
-
-        confirmationScore: score,
-        maxConfirmationScore: 8,
-
-        confirmationPercent: Math.round(
-            score / 8 * 100
+    const candleMetrics = {
+        upperWick: round(
+            current.high - Math.max(current.open, current.close)
         ),
 
-        validThreshold: confirmed && score >= 6,
+        lowerWick: round(
+            Math.min(current.open, current.close) - current.low
+        ),
 
+        range: round(candleRange),
 
-        sequence: {
-            sweep: sweep
+        body: round(candleBody(current))
+    };
+
+    return {
+        status: entryConfirmed ? entryStatus : "WAIT",
+
+        engine: ENGINE_NAME,
+        version: ENGINE_VERSION,
+
+        symbol,
+        interval,
+
+        candleCount: candles.length,
+
+        analysis: {
+            status: entryConfirmed ? entryStatus : "WAIT",
+
+            candleOrder: "ASCENDING",
+            candleCount: candles.length,
+
+            trend,
+
+            structure: trend === "BULLISH"
+                ? "HH + HL"
+                : trend === "BEARISH"
+                    ? "LH + LL"
+                    : "MIXED",
+
+            bos: Boolean(structureBreak?.bos),
+            bosDirection: structureBreak?.bos
+                ? structureBreak.direction
+                : "NONE",
+
+            choch: Boolean(structureBreak?.choch),
+            chochDirection: structureBreak?.choch
+                ? structureBreak.direction
+                : "NONE",
+
+            currentPrice: round(current.close),
+
+            swingHigh: round(latestSwingHigh?.price),
+            swingLow: round(latestSwingLow?.price),
+
+            previousSwingHigh: round(previousSwingHigh?.price),
+            previousSwingLow: round(previousSwingLow?.price),
+
+            lowerHigh,
+            lowerLow,
+            higherHigh,
+            higherLow,
+
+            lastSwingHighTime: latestSwingHigh?.time ?? null,
+            lastSwingLowTime: latestSwingLow?.time ?? null,
+
+            liquidity: {
+                status: sweep
+                    ? `CONFIRMED ${sweep.type.replaceAll("_", "-")}`
+                    : "NO CONFIRMED SWEEP",
+
+                detected: sweepConfirmed,
+
+                sweepDirection: sweep?.direction ?? "NONE",
+
+                rejection: Boolean(sweep?.rejection),
+
+                lowSweep: Boolean(sweep?.lowSweep),
+                highSweep: Boolean(sweep?.highSweep),
+
+                liquidityLevel: round(sweep?.liquidityLevel),
+
+                sweepLow: round(sweep?.sweepLow),
+                sweepHigh: round(sweep?.sweepHigh),
+
+                time: sweep?.time ?? null
+            },
+
+            displacement: {
+                detected: Boolean(displacement),
+
+                direction: displacement?.direction ?? "NONE",
+
+                index: displacement?.index ?? null,
+                time: displacement?.time ?? null,
+
+                body: round(displacement?.body),
+                averageBody: round(displacement?.averageBody),
+                threshold: round(displacement?.threshold),
+
+                linkedToSweep: Boolean(displacement?.linkedToSweep)
+            },
+
+            fvg: fvg
                 ? {
                     detected: true,
-                    direction: sweep.direction,
-                    type: sweep.type,
-                    index: sweep.index,
-                    time: sweep.time,
-                    level: sweep.level,
-                    sweepLow: sweep.sweepLow,
-                    sweepHigh: sweep.sweepHigh,
-                    rejection: sweep.rejection
+
+                    direction: fvg.direction,
+
+                    high: round(fvg.high),
+                    low: round(fvg.low),
+
+                    index: fvg.index,
+                    time: fvg.time,
+
+                    invalidated: fvg.invalidated,
+
+                    retest: fvg.retest,
+                    firstRetestIndex: fvg.firstRetestIndex,
+                    latestRetestIndex: fvg.latestRetestIndex,
+
+                    currentRetest: fvg.currentRetest,
+
+                    position: fvg.position
                 }
                 : {
                     detected: false,
+
                     direction: "NONE",
-                    type: null,
+
+                    high: null,
+                    low: null,
+
                     index: null,
                     time: null,
-                    level: null,
-                    sweepLow: null,
-                    sweepHigh: null,
-                    rejection: false
+
+                    invalidated: false,
+
+                    retest: false,
+                    firstRetestIndex: null,
+                    latestRetestIndex: null,
+
+                    currentRetest: false,
+
+                    position: "OUTSIDE"
                 },
 
+            setup: {
+                status: entryConfirmed
+                    ? "CONFIRMED"
+                    : "WAITING",
 
-            displacement: {
-                detected: disp.detected,
-                direction: disp.direction,
-                index: disp.index,
-                time: disp.time,
+                sweepConfirmed,
+                displacementConfirmed,
+                structureBreakConfirmed,
 
-                linkedToSweep: Boolean(
-                    disp.linkedSweep &&
+                fvgConfirmed,
+                fvgRetest,
+
+                fvgInvalidated
+            },
+
+            entry: {
+                status: entryStatus,
+                confirmed: entryConfirmed,
+
+                direction: trade?.direction ?? "NONE",
+
+                price: trade?.price ?? null,
+
+                stopLoss: trade?.stopLoss ?? null,
+
+                takeProfit1: trade?.takeProfit1 ?? null,
+                takeProfit2: trade?.takeProfit2 ?? null,
+                takeProfit3: trade?.takeProfit3 ?? null,
+
+                riskDistance: trade?.riskDistance ?? null,
+
+                riskReward: trade?.riskReward ?? null
+            },
+
+            confirmationScore: {
+                score: confirmationScore,
+                maximum: 8,
+
+                percentage: Math.round(
+                    (confirmationScore / 8) * 100
+                ),
+
+                validThreshold: entryConfirmed
+            },
+
+            sequence: {
+                sweep: sweep
+                    ? {
+                        detected: true,
+                        index: sweep.index,
+                        time: sweep.time,
+                        direction: sweep.direction,
+                        liquidityLevel: round(sweep.liquidityLevel),
+                        sweepLow: round(sweep.sweepLow),
+                        sweepHigh: round(sweep.sweepHigh)
+                    }
+                    : {
+                        detected: false,
+                        index: null,
+                        time: null,
+                        direction: "NONE",
+                        liquidityLevel: null,
+                        sweepLow: null,
+                        sweepHigh: null
+                    },
+
+                displacement: displacement
+                    ? {
+                        detected: true,
+                        index: displacement.index,
+                        time: displacement.time,
+                        direction: displacement.direction
+                    }
+                    : {
+                        detected: false,
+                        index: null,
+                        time: null,
+                        direction: "NONE"
+                    },
+
+                structureBreak: structureBreak
+                    ? {
+                        detected: true,
+
+                        bos: structureBreak.bos,
+                        choch: structureBreak.choch,
+
+                        direction: structureBreak.direction,
+                        previousTrend: structureBreak.previousTrend,
+
+                        index: structureBreak.index,
+                        time: structureBreak.time,
+
+                        brokenLevel: round(structureBreak.brokenLevel)
+                    }
+                    : {
+                        detected: false,
+
+                        bos: false,
+                        choch: false,
+
+                        direction: "NONE",
+                        previousTrend: trend,
+
+                        index: null,
+                        time: null,
+
+                        brokenLevel: null
+                    },
+
+                fvg: fvg
+                    ? {
+                        detected: true,
+
+                        index: fvg.index,
+                        time: fvg.time,
+
+                        direction: fvg.direction,
+
+                        high: round(fvg.high),
+                        low: round(fvg.low),
+
+                        invalidated: fvg.invalidated
+                    }
+                    : {
+                        detected: false,
+
+                        index: null,
+                        time: null,
+
+                        direction: "NONE",
+
+                        high: null,
+                        low: null,
+
+                        invalidated: false
+                    },
+
+                retest: {
+                    detected: Boolean(fvg?.retest),
+
+                    currentCandle: fvgRetest,
+
+                    index: fvg?.latestRetestIndex ?? null,
+
+                    time: fvg?.latestRetestIndex !== null &&
+                        fvg?.latestRetestIndex !== undefined
+                        ? candles[fvg.latestRetestIndex]?.time ?? null
+                        : null
+                },
+
+                validOrder: Boolean(
                     sweep &&
-                    disp.linkedSweep.index === sweep.index
-                )
+                    displacement &&
+                    structureBreak &&
+                    selectedFVG &&
+                    sweep.index < displacement.index &&
+                    displacement.index <= structureBreak.index &&
+                    structureBreak.index < selectedFVG.index
+                ),
+
+                invalidReason,
+
+                complete: entryConfirmed
             },
 
-
-            structureBreak: {
-                detected: br.detected,
-
-                bos: br.bos,
-                bosDirection: br.bosDirection,
-
-                choch: br.choch,
-                chochDirection: br.chochDirection,
-
-                direction: br.direction,
-                previousTrend: br.previousTrend,
-
-                index: br.index,
-                time: br.time,
-
-                brokenLevel: br.brokenLevel,
-                brokenLevelTime: br.brokenLevelTime
-            },
-
-
-            fvg: {
-                detected: fvg.detected,
-                direction: fvg.direction,
-                index: fvg.index,
-                time: fvg.time,
-                retest: currentRetest,
-                invalidated
-            },
-
-
-            retest: {
-                detected: retest.index !== null,
-                currentCandle: currentRetest,
-                index: retest.index,
-                time: retest.time
-            },
-
-
-            validOrder: Boolean(
-                chain &&
-                chronologicalOrder &&
-                sequenceDirectionsAgree
-            ),
-
-            invalidReason: reason,
-
-            complete: confirmed
+            candleMetrics
         }
     };
 }
+
+// ------------------------------------------------------------
+// DEFAULT EXPORT
+// ------------------------------------------------------------
+
+export default analyzeMarketStructure;
