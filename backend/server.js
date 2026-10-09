@@ -15,8 +15,13 @@ const PORT = process.env.PORT || 3000;
 
 const API_KEY = process.env.TWELVE_DATA_API_KEY;
 
-const TWELVE_DATA_BASE =
-  "https://api.twelvedata.com";
+const TWELVE_DATA_BASE = "https://api.twelvedata.com";
+
+/*
+=========================================================
+TRUSTFX SUPPORTED MARKETS
+=========================================================
+*/
 
 const symbols = [
   "XAU/USD",
@@ -35,7 +40,6 @@ LIVE PRICE STORAGE
 
 let latestPrices = {};
 
-
 /*
 =========================================================
 CANDLE CACHE
@@ -43,7 +47,6 @@ CANDLE CACHE
 */
 
 const candleCache = {};
-
 
 /*
 =========================================================
@@ -60,7 +63,6 @@ const allowedIntervals = [
   "1day"
 ];
 
-
 /*
 =========================================================
 SYMBOL MAP
@@ -69,13 +71,37 @@ SYMBOL MAP
 
 const symbolMap = {
   XAUUSD: "XAU/USD",
+  "XAU/USD": "XAU/USD",
+
   EURUSD: "EUR/USD",
+  "EUR/USD": "EUR/USD",
+
   GBPUSD: "GBP/USD",
+  "GBP/USD": "GBP/USD",
+
   USDJPY: "USD/JPY",
+  "USD/JPY": "USD/JPY",
+
   AUDUSD: "AUD/USD",
-  USDCAD: "USD/CAD"
+  "AUD/USD": "AUD/USD",
+
+  USDCAD: "USD/CAD",
+  "USD/CAD": "USD/CAD"
 };
 
+/*
+=========================================================
+NORMALIZE SYMBOL
+=========================================================
+*/
+
+function normalizeSymbol(requestedSymbol) {
+  const normalized = String(requestedSymbol || "")
+    .trim()
+    .toUpperCase();
+
+  return symbolMap[normalized] || null;
+}
 
 /*
 =========================================================
@@ -84,14 +110,12 @@ HEALTH CHECK
 */
 
 app.get("/healthz", (req, res) => {
-
   res.json({
     status: "healthy",
-    service: "TrustFX AI Trading Backend"
+    service: "TrustFX AI Trading Backend",
+    timestamp: new Date().toISOString()
   });
-
 });
-
 
 /*
 =========================================================
@@ -100,21 +124,20 @@ MAIN STATUS
 */
 
 app.get("/", (req, res) => {
-
   res.json({
     status: "online",
     service: "TrustFX Live Market Backend",
-    version: "3.0",
-    marketData: "connected",
+    version: "3.1",
+    marketData: API_KEY ? "configured" : "not_configured",
     engines: [
       "Live Prices",
       "Candles",
       "Market Structure"
-    ]
+    ],
+    supportedSymbols: symbols,
+    supportedIntervals: allowedIntervals
   });
-
 });
-
 
 /*
 =========================================================
@@ -123,14 +146,13 @@ LIVE PRICES
 */
 
 app.get("/prices", (req, res) => {
-
   res.json({
     status: "online",
-    prices: latestPrices
+    prices: latestPrices,
+    count: Object.keys(latestPrices).length,
+    timestamp: new Date().toISOString()
   });
-
 });
-
 
 /*
 =========================================================
@@ -139,62 +161,64 @@ GET CANDLES
 */
 
 app.get("/candles/:symbol", async (req, res) => {
-
   try {
-
     if (!API_KEY) {
-
       return res.status(500).json({
         status: "error",
-        message:
-          "Twelve Data API key is not configured."
+        message: "Twelve Data API key is not configured."
       });
-
     }
-
-
-    const requestedSymbol =
-      req.params.symbol.toUpperCase();
-
-
-    const interval =
-      req.query.interval || "15min";
-
-
-    const outputsize =
-      Math.min(
-        Number(req.query.outputsize) || 100,
-        500
-      );
-
 
     /*
     -------------------------------------------------------
-    VALIDATE TIMEFRAME
+    SYMBOL
     -------------------------------------------------------
     */
 
-    if (!allowedIntervals.includes(interval)) {
+    const symbol = normalizeSymbol(req.params.symbol);
 
+    if (!symbol) {
+      return res.status(400).json({
+        status: "error",
+        message: "Unsupported trading symbol.",
+        supportedSymbols: symbols
+      });
+    }
+
+    /*
+    -------------------------------------------------------
+    TIMEFRAME
+    -------------------------------------------------------
+    */
+
+    const interval = String(
+      req.query.interval || "15min"
+    );
+
+    if (!allowedIntervals.includes(interval)) {
       return res.status(400).json({
         status: "error",
         message: "Invalid timeframe.",
         allowedIntervals
       });
-
     }
-
 
     /*
     -------------------------------------------------------
-    CONVERT SYMBOL
+    OUTPUT SIZE
     -------------------------------------------------------
     */
 
-    const symbol =
-      symbolMap[requestedSymbol] ||
-      requestedSymbol;
+    const requestedOutputsize = Number(
+      req.query.outputsize
+    );
 
+    const outputsize = Number.isFinite(requestedOutputsize)
+      ? Math.max(
+          1,
+          Math.min(Math.floor(requestedOutputsize), 500)
+        )
+      : 100;
 
     /*
     -------------------------------------------------------
@@ -205,14 +229,11 @@ app.get("/candles/:symbol", async (req, res) => {
     const cacheKey =
       `${symbol}_${interval}_${outputsize}`;
 
-
-    const cached =
-      candleCache[cacheKey];
-
+    const cached = candleCache[cacheKey];
 
     /*
     -------------------------------------------------------
-    RETURN CACHE
+    RETURN CACHED CANDLES
     -------------------------------------------------------
     */
 
@@ -220,29 +241,19 @@ app.get("/candles/:symbol", async (req, res) => {
       cached &&
       Date.now() - cached.timestamp < 60000
     ) {
-
       return res.json({
-
         status: "online",
-
         source: "cache",
-
         symbol,
-
         interval,
-
         count: cached.data.length,
-
         candles: cached.data
-
       });
-
     }
-
 
     /*
     -------------------------------------------------------
-    TWELVE DATA REQUEST
+    REQUEST TWELVE DATA
     -------------------------------------------------------
     */
 
@@ -253,44 +264,32 @@ app.get("/candles/:symbol", async (req, res) => {
       `&outputsize=${outputsize}` +
       `&apikey=${encodeURIComponent(API_KEY)}`;
 
-
-    const response =
-      await fetch(url);
-
+    const response = await fetch(url);
 
     if (!response.ok) {
-
       throw new Error(
         `Twelve Data HTTP ${response.status}`
       );
-
     }
 
-
-    const data =
-      await response.json();
-
+    const data = await response.json();
 
     /*
     -------------------------------------------------------
-    CHECK TWELVE DATA ERROR
+    CHECK API ERRORS
     -------------------------------------------------------
     */
 
-    if (data.status === "error") {
-
+    if (
+      data.status === "error" ||
+      data.code
+    ) {
       return res.status(400).json({
-
         status: "error",
-
         message:
-          data.message ||
-          "Twelve Data error"
-
+          data.message || "Twelve Data returned an error."
       });
-
     }
-
 
     /*
     -------------------------------------------------------
@@ -298,88 +297,58 @@ app.get("/candles/:symbol", async (req, res) => {
     -------------------------------------------------------
     */
 
-    const values =
-      Array.isArray(data.values)
-        ? data.values
-        : [];
-
+    const values = Array.isArray(data.values)
+      ? data.values
+      : [];
 
     if (values.length === 0) {
-
       return res.status(404).json({
-
         status: "error",
-
-        message:
-          "No candle data returned."
-
+        message: "No candle data returned.",
+        symbol,
+        interval
       });
-
     }
-
 
     /*
     -------------------------------------------------------
-    SAVE TO CACHE
+    SAVE CACHE
     -------------------------------------------------------
     */
 
     candleCache[cacheKey] = {
-
       timestamp: Date.now(),
-
       data: values
-
     };
-
 
     /*
     -------------------------------------------------------
-    SEND RESPONSE
+    RETURN CANDLES
     -------------------------------------------------------
     */
 
-    res.json({
-
+    return res.json({
       status: "online",
-
       source: "Twelve Data",
-
       symbol,
-
       interval,
-
       count: values.length,
-
       candles: values
-
     });
 
-
   } catch (error) {
-
     console.error(
       "Candle error:",
       error.message
     );
 
-
-    res.status(500).json({
-
+    return res.status(500).json({
       status: "error",
-
-      message:
-        "Unable to retrieve candle data.",
-
-      detail:
-        error.message
-
+      message: "Unable to retrieve candle data.",
+      detail: error.message
     });
-
   }
-
 });
-
 
 /*
 =========================================================
@@ -388,109 +357,83 @@ TRUSTFX MARKET STRUCTURE ANALYSIS
 */
 
 app.get("/analysis/:symbol", async (req, res) => {
-
   try {
-
     if (!API_KEY) {
-
       return res.status(500).json({
-
         status: "error",
-
-        message:
-          "Twelve Data API key is not configured."
-
+        message: "Twelve Data API key is not configured."
       });
-
     }
 
-
     /*
     -------------------------------------------------------
-    SYMBOL
+    NORMALIZE SYMBOL
     -------------------------------------------------------
     */
 
-    const requestedSymbol =
-      req.params.symbol.toUpperCase();
+    const symbol = normalizeSymbol(req.params.symbol);
 
-
-    const symbol =
-      symbolMap[requestedSymbol] ||
-      requestedSymbol;
-
+    if (!symbol) {
+      return res.status(400).json({
+        status: "error",
+        message: "Unsupported trading symbol.",
+        supportedSymbols: symbols
+      });
+    }
 
     /*
     -------------------------------------------------------
-    TIMEFRAME
+    GET TIMEFRAME
     -------------------------------------------------------
     */
 
-    const interval =
-      req.query.interval || "15min";
-
+    const interval = String(
+      req.query.interval || "15min"
+    );
 
     if (!allowedIntervals.includes(interval)) {
-
       return res.status(400).json({
-
         status: "error",
-
-        message:
-          "Invalid timeframe.",
-
+        message: "Invalid timeframe.",
         allowedIntervals
-
       });
-
     }
-
 
     /*
     -------------------------------------------------------
-    ANALYSIS NEEDS ENOUGH CANDLES
+    ANALYSIS CANDLE COUNT
     -------------------------------------------------------
     */
 
     const outputsize = 100;
 
-
     /*
     -------------------------------------------------------
-    USE SAME CANDLE CACHE
+    CHECK SHARED CANDLE CACHE
     -------------------------------------------------------
     */
 
     const cacheKey =
       `${symbol}_${interval}_${outputsize}`;
 
-
     let candles = null;
 
-
-    const cached =
-      candleCache[cacheKey];
-
+    const cached = candleCache[cacheKey];
 
     if (
       cached &&
       Date.now() - cached.timestamp < 60000
     ) {
-
-      candles =
-        cached.data;
-
+      candles = cached.data;
     }
-
 
     /*
     -------------------------------------------------------
-    GET FRESH CANDLES IF CACHE EMPTY
+    FETCH CANDLES IF NOT CACHED
     -------------------------------------------------------
     */
 
     if (!candles) {
-
       const url =
         `${TWELVE_DATA_BASE}/time_series` +
         `?symbol=${encodeURIComponent(symbol)}` +
@@ -498,85 +441,65 @@ app.get("/analysis/:symbol", async (req, res) => {
         `&outputsize=${outputsize}` +
         `&apikey=${encodeURIComponent(API_KEY)}`;
 
-
-      const response =
-        await fetch(url);
-
+      const response = await fetch(url);
 
       if (!response.ok) {
-
         throw new Error(
           `Twelve Data HTTP ${response.status}`
         );
-
       }
 
+      const data = await response.json();
 
-      const data =
-        await response.json();
-
-
-      if (data.status === "error") {
-
+      if (
+        data.status === "error" ||
+        data.code
+      ) {
         return res.status(400).json({
-
           status: "error",
-
           message:
-            data.message ||
-            "Twelve Data error"
-
+            data.message || "Twelve Data returned an error."
         });
-
       }
 
-
-      candles =
-        Array.isArray(data.values)
-          ? data.values
-          : [];
-
+      candles = Array.isArray(data.values)
+        ? data.values
+        : [];
 
       if (candles.length === 0) {
-
         return res.status(404).json({
-
           status: "error",
-
-          message:
-            "No candle data available for analysis."
-
+          message: "No candle data available for analysis.",
+          symbol,
+          interval
         });
-
       }
-
 
       /*
       -----------------------------------------------------
-      SAVE TO SAME CACHE
+      SAVE CANDLES TO SHARED CACHE
       -----------------------------------------------------
       */
 
       candleCache[cacheKey] = {
-
         timestamp: Date.now(),
-
         data: candles
-
       };
-
     }
-
 
     /*
     -------------------------------------------------------
     RUN MARKET STRUCTURE ENGINE
     -------------------------------------------------------
+    IMPORTANT FIX:
+    Pass the symbol and interval to the analysis engine.
+    -------------------------------------------------------
     */
 
-    const analysis =
-      analyzeMarketStructure(candles);
-
+    const analysis = analyzeMarketStructure(candles, {
+      symbol,
+      interval
+    });
 
     /*
     -------------------------------------------------------
@@ -584,51 +507,29 @@ app.get("/analysis/:symbol", async (req, res) => {
     -------------------------------------------------------
     */
 
-    res.json({
-
+    return res.json({
       status: "online",
-
-      engine:
-        "TRUSTFX Market Structure Engine",
-
+      engine: "TRUSTFX Market Structure Engine",
       version: "1.0",
-
       symbol,
-
       interval,
-
-      candleCount:
-        candles.length,
-
+      candleCount: candles.length,
       analysis
-
     });
 
-
   } catch (error) {
-
     console.error(
       "Analysis error:",
       error.message
     );
 
-
-    res.status(500).json({
-
+    return res.status(500).json({
       status: "error",
-
-      message:
-        "Unable to analyze market structure.",
-
-      detail:
-        error.message
-
+      message: "Unable to analyze market structure.",
+      detail: error.message
     });
-
   }
-
 });
-
 
 /*
 =========================================================
@@ -636,24 +537,27 @@ TWELVE DATA WEBSOCKET
 =========================================================
 */
 
+let reconnectTimer = null;
+let reconnectDelay = 10000;
+
 function connectTwelveData() {
-
   if (!API_KEY) {
-
     console.log(
       "Twelve Data API key is not configured."
     );
 
     return;
-
   }
 
+  /*
+  -------------------------------------------------------
+  CREATE WEBSOCKET CONNECTION
+  -------------------------------------------------------
+  */
 
-  const ws =
-    new WebSocket(
-      `wss://ws.twelvedata.com/v1/quotes/price?apikey=${API_KEY}`
-    );
-
+  const ws = new WebSocket(
+    `wss://ws.twelvedata.com/v1/quotes/price?apikey=${encodeURIComponent(API_KEY)}`
+  );
 
   /*
   -------------------------------------------------------
@@ -662,35 +566,26 @@ function connectTwelveData() {
   */
 
   ws.on("open", () => {
-
     console.log(
-      "Connected to Twelve Data."
+      "Connected to Twelve Data WebSocket."
     );
 
+    reconnectDelay = 10000;
 
     ws.send(
       JSON.stringify({
-
         action: "subscribe",
-
         params: {
-
-          symbols:
-            symbols.join(",")
-
+          symbols: symbols.join(",")
         }
-
       })
     );
-
 
     console.log(
       "Subscribed to:",
       symbols.join(", ")
     );
-
   });
-
 
   /*
   -------------------------------------------------------
@@ -699,45 +594,43 @@ function connectTwelveData() {
   */
 
   ws.on("message", (message) => {
-
     try {
+      const data = JSON.parse(
+        message.toString()
+      );
 
-      const data =
-        JSON.parse(
-          message.toString()
-        );
-
-
-      if (data.event === "price") {
-
+      if (
+        data.event === "price" &&
+        data.symbol &&
+        data.price !== undefined
+      ) {
         latestPrices[data.symbol] = {
-
-          price:
-            data.price,
-
-          timestamp:
-            data.timestamp
-
+          price: Number(data.price),
+          timestamp: data.timestamp || Date.now()
         };
+      }
 
-
+      if (data.event === "subscribe-status") {
         console.log(
-          `${data.symbol}: ${data.price}`
+          "Twelve Data subscription status:",
+          JSON.stringify(data)
         );
+      }
 
+      if (data.event === "error") {
+        console.error(
+          "Twelve Data WebSocket message error:",
+          JSON.stringify(data)
+        );
       }
 
     } catch (error) {
-
-      console.log(
-        "Message error:",
+      console.error(
+        "WebSocket message error:",
         error.message
       );
-
     }
-
   });
-
 
   /*
   -------------------------------------------------------
@@ -746,14 +639,11 @@ function connectTwelveData() {
   */
 
   ws.on("error", (error) => {
-
-    console.log(
+    console.error(
       "WebSocket error:",
       error.message
     );
-
   });
-
 
   /*
   -------------------------------------------------------
@@ -762,26 +652,29 @@ function connectTwelveData() {
   */
 
   ws.on("close", () => {
+    console.log(
+      "Twelve Data WebSocket connection closed."
+    );
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+    }
 
     console.log(
-      "Twelve Data connection closed."
+      `Reconnecting in ${reconnectDelay / 1000} seconds...`
     );
 
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectTwelveData();
+    }, reconnectDelay);
 
-    console.log(
-      "Attempting to reconnect in 10 seconds..."
+    reconnectDelay = Math.min(
+      reconnectDelay * 2,
+      60000
     );
-
-
-    setTimeout(
-      connectTwelveData,
-      10000
-    );
-
   });
-
 }
-
 
 /*
 =========================================================
@@ -790,22 +683,17 @@ START SERVER
 */
 
 app.listen(PORT, () => {
-
   console.log(
     `TrustFX backend running on port ${PORT}`
   );
-
 
   console.log(
     "TrustFX candle engine ready."
   );
 
-
   console.log(
     "TrustFX market structure engine ready."
   );
 
-
   connectTwelveData();
-
 });
