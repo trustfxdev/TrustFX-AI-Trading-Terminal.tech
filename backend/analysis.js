@@ -1,1254 +1,1624 @@
-// ============================================================
-// TRUSTFX MARKET STRUCTURE ENGINE
-// Stage 3.8
-//
-// Retest Quality + Risk Filter
-//
-// Sweep -> Displacement -> BOS/CHoCH -> FVG
-// -> Quality Retest -> Risk Validation -> Entry
-//
-// Rule-based prototype. Not a profitability guarantee.
-// ============================================================
+/**
+ * TRUSTFX Market Structure Engine — Stage 3.8
+ *
+ * Analysis-only engine. It does not place trades.
+ *
+ * A signal is confirmed only when the complete sequence is valid:
+ * Liquidity Sweep -> Displacement -> Structure Break -> FVG
+ * -> Current-Candle Retest -> Validated Position Size.
+ */
 
-const ENGINE_NAME = "TRUSTFX Market Structure Engine";
-const ENGINE_VERSION = "1.0";
+const ENGINE_NAME = 'TRUSTFX Market Structure Engine';
+const ENGINE_VERSION = '1.0';
 
 const DEFAULTS = {
-    accountBalance: 6000,
-    riskPercent: 0.5,
+  accountBalance: 6000,
+  riskPercent: 0.5,
+  maxRiskDistance: 10,
+  maximumRetestRangeMultiple: 2.5,
 
-    // Maximum permitted distance between entry and stop-loss.
-    // This is in PRICE UNITS, not dollars of account risk.
-    // Calibrate separately for the selected symbol/timeframe.
-    maxRiskDistance: 10,
+  // Must be configured for the exact broker and trading symbol.
+  // Never guess this value.
+  valuePerPriceUnitPerLot: null,
 
-    // Reject a retest candle whose range is larger than
-    // this multiple of the average recent candle body.
-    maxRetestRangeMultiple: 2.5,
+  minLot: 0.01,
+  lotStep: 0.01,
+  maxLot: null,
 
-    swingStrength: 2,
-    sweepLookback: 35,
-    displacementLookahead: 10,
+  swingStrength: 2,
+  sweepLookback: 35,
+  displacementLookback: 10,
+  displacementMultiplier: 1.2,
+  fvgLookback: 12,
 
-    // Must be explicitly supplied for reliable lot sizing.
-    // Value = account-currency amount gained/lost per
-    // 1.0 price-unit movement for 1.0 lot.
-    valuePerPriceUnitPerLot: null,
-
-    // Optional broker-specific volume limits.
-    minLot: 0.01,
-    maxLot: 100,
-    lotStep: 0.01
+  stopBuffer: null,
+  minRiskDistance: 0.0000001,
 };
 
-// ------------------------------------------------------------
-// HELPERS
-// ------------------------------------------------------------
-
-function num(value) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : NaN;
+function num(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-function round(value, decimals = 5) {
-    if (!Number.isFinite(value)) return null;
-
-    const factor = 10 ** decimals;
-
-    return Math.round((value + Number.EPSILON) * factor) / factor;
+function round(value, digits = 5) {
+  if (!Number.isFinite(value)) return null;
+  return Number(value.toFixed(digits));
 }
 
-function timeOf(candle) {
-    return candle.datetime ?? candle.time ?? candle.timestamp ?? null;
+function candleTime(candle) {
+  const raw =
+    candle?.datetime ??
+    candle?.time ??
+    candle?.timestamp ??
+    candle?.date;
+
+  if (raw === undefined || raw === null) return null;
+
+  const ms =
+    typeof raw === 'number'
+      ? raw < 1e12
+        ? raw * 1000
+        : raw
+      : Date.parse(raw);
+
+  return Number.isFinite(ms) ? ms : null;
 }
 
+function formatTime(candle) {
+  const ms = candleTime(candle);
+
+  if (ms === null) {
+    return (
+      candle?.datetime ??
+      candle?.time ??
+      candle?.timestamp ??
+      null
+    );
+  }
+
+  return new Date(ms)
+    .toISOString()
+    .replace('T', ' ')
+    .slice(0, 19);
+}
+
+/**
+ * Normalize candle data and arrange it chronologically.
+ */
 function normalizeCandles(input) {
-    if (!Array.isArray(input)) return [];
+  if (!Array.isArray(input)) return [];
 
-    const candles = input
-        .map((c, originalIndex) => ({
-            originalIndex,
-            time: timeOf(c),
+  const normalized = input
+    .map((c, originalIndex) => {
+      const open = num(c?.open);
+      const high = num(c?.high);
+      const low = num(c?.low);
+      const close = num(c?.close);
 
-            open: num(c.open),
-            high: num(c.high),
-            low: num(c.low),
-            close: num(c.close),
+      return {
+        open,
+        high,
+        low,
+        close,
+        volume: num(c?.volume, 0),
 
-            volume: num(c.volume)
-        }))
-        .filter(c =>
-            Number.isFinite(c.open) &&
-            Number.isFinite(c.high) &&
-            Number.isFinite(c.low) &&
-            Number.isFinite(c.close) &&
-            c.high >= c.low &&
-            c.high >= Math.max(c.open, c.close) &&
-            c.low <= Math.min(c.open, c.close)
-        );
+        time:
+          c?.datetime ??
+          c?.time ??
+          c?.timestamp ??
+          c?.date ??
+          null,
 
-    candles.sort((a, b) => {
-        const ta = Date.parse(a.time);
-        const tb = Date.parse(b.time);
+        _timeMs: candleTime(c),
+        _originalIndex: originalIndex,
+      };
+    })
+    .filter(
+      c =>
+        [c.open, c.high, c.low, c.close].every(Number.isFinite) &&
+        c.high >= c.low &&
+        c.high >= Math.max(c.open, c.close) &&
+        c.low <= Math.min(c.open, c.close)
+    );
 
-        if (Number.isFinite(ta) && Number.isFinite(tb)) {
-            return ta - tb;
-        }
-
-        return a.originalIndex - b.originalIndex;
-    });
-
-    return candles;
-}
-
-function body(candle) {
-    return Math.abs(candle.close - candle.open);
-}
-
-function bullish(candle) {
-    return candle.close > candle.open;
-}
-
-function bearish(candle) {
-    return candle.close < candle.open;
-}
-
-function averageBody(candles, endIndex, period = 10) {
-    const start = Math.max(0, endIndex - period);
-
-    const values = [];
-
-    for (let i = start; i < endIndex; i++) {
-        values.push(body(candles[i]));
+  normalized.sort((a, b) => {
+    if (a._timeMs !== null && b._timeMs !== null) {
+      return a._timeMs - b._timeMs;
     }
 
-    if (!values.length) return 0;
+    if (a._timeMs !== null) return -1;
+    if (b._timeMs !== null) return 1;
 
-    return values.reduce((sum, n) => sum + n, 0) / values.length;
+    return a._originalIndex - b._originalIndex;
+  });
+
+  return normalized;
 }
 
-function mergeOptions(options = {}) {
-    return {
-        ...DEFAULTS,
-        ...options
-    };
+function average(values) {
+  const valid = values.filter(Number.isFinite);
+
+  return valid.length
+    ? valid.reduce((sum, value) => sum + value, 0) / valid.length
+    : 0;
 }
 
-// ------------------------------------------------------------
-// SWINGS
-// ------------------------------------------------------------
+function candleBody(c) {
+  return Math.abs(c.close - c.open);
+}
 
+function candleRange(c) {
+  return c.high - c.low;
+}
+
+function bullish(c) {
+  return c.close > c.open;
+}
+
+function bearish(c) {
+  return c.close < c.open;
+}
+
+/**
+ * Detect swing highs and swing lows.
+ */
 function detectSwings(candles, strength = 2) {
-    const swingHighs = [];
-    const swingLows = [];
+  const highs = [];
+  const lows = [];
 
-    for (let i = strength; i < candles.length - strength; i++) {
-        const c = candles[i];
+  for (
+    let i = strength;
+    i < candles.length - strength;
+    i++
+  ) {
+    const c = candles[i];
 
-        let high = true;
-        let low = true;
+    let isHigh = true;
+    let isLow = true;
 
-        for (let j = 1; j <= strength; j++) {
-            if (
-                candles[i - j].high >= c.high ||
-                candles[i + j].high > c.high
-            ) {
-                high = false;
-            }
+    for (
+      let j = i - strength;
+      j <= i + strength;
+      j++
+    ) {
+      if (j === i) continue;
 
-            if (
-                candles[i - j].low <= c.low ||
-                candles[i + j].low < c.low
-            ) {
-                low = false;
-            }
-        }
+      if (candles[j].high >= c.high) {
+        isHigh = false;
+      }
 
-        if (high) {
-            swingHighs.push({
-                index: i,
-                time: c.time,
-                price: c.high
-            });
-        }
-
-        if (low) {
-            swingLows.push({
-                index: i,
-                time: c.time,
-                price: c.low
-            });
-        }
+      if (candles[j].low <= c.low) {
+        isLow = false;
+      }
     }
 
-    return { swingHighs, swingLows };
-}
-
-function trendBefore(swings, index) {
-    const highs = swings.swingHighs.filter(s => s.index < index);
-    const lows = swings.swingLows.filter(s => s.index < index);
-
-    if (highs.length < 2 || lows.length < 2) return "NEUTRAL";
-
-    const h1 = highs[highs.length - 2].price;
-    const h2 = highs[highs.length - 1].price;
-
-    const l1 = lows[lows.length - 2].price;
-    const l2 = lows[lows.length - 1].price;
-
-    if (h2 < h1 && l2 < l1) return "BEARISH";
-    if (h2 > h1 && l2 > l1) return "BULLISH";
-
-    return "NEUTRAL";
-}
-
-function determineTrend(swings) {
-    return trendBefore(
-        swings,
-        Number.POSITIVE_INFINITY
-    );
-}
-
-// ------------------------------------------------------------
-// LIQUIDITY SWEEP
-// ------------------------------------------------------------
-
-function detectSweep(candles, swings, lookback) {
-    const last = candles.length - 1;
-    const start = Math.max(2, last - lookback);
-
-    for (let i = last; i >= start; i--) {
-        const c = candles[i];
-
-        const highs = swings.swingHighs.filter(s => s.index < i);
-        const lows = swings.swingLows.filter(s => s.index < i);
-
-        const priorHigh = highs.at(-1);
-        const priorLow = lows.at(-1);
-
-        if (
-            priorLow &&
-            c.low < priorLow.price &&
-            c.close > priorLow.price
-        ) {
-            return {
-                detected: true,
-                direction: "BULLISH",
-                type: "SELL_SIDE_SWEEP",
-
-                index: i,
-                time: c.time,
-
-                liquidityLevel: priorLow.price,
-
-                sweepLow: c.low,
-                sweepHigh: c.high
-            };
-        }
-
-        if (
-            priorHigh &&
-            c.high > priorHigh.price &&
-            c.close < priorHigh.price
-        ) {
-            return {
-                detected: true,
-                direction: "BEARISH",
-                type: "BUY_SIDE_SWEEP",
-
-                index: i,
-                time: c.time,
-
-                liquidityLevel: priorHigh.price,
-
-                sweepLow: c.low,
-                sweepHigh: c.high
-            };
-        }
+    if (isHigh) {
+      highs.push({
+        index: i,
+        price: c.high,
+        time: formatTime(c),
+      });
     }
 
-    return null;
-}
-
-// ------------------------------------------------------------
-// DISPLACEMENT
-// ------------------------------------------------------------
-
-function detectDisplacement(candles, sweep, lookahead) {
-    if (!sweep) return null;
-
-    const end = Math.min(
-        candles.length - 1,
-        sweep.index + lookahead
-    );
-
-    for (let i = sweep.index + 1; i <= end; i++) {
-        const c = candles[i];
-
-        const avg = averageBody(candles, i, 10);
-        if (avg <= 0) continue;
-
-        const candleBody = body(c);
-        const threshold = avg * 1.2;
-
-        const valid =
-            sweep.direction === "BULLISH"
-                ? bullish(c)
-                : bearish(c);
-
-        if (valid && candleBody >= threshold) {
-            return {
-                detected: true,
-                direction: sweep.direction,
-
-                index: i,
-                time: c.time,
-
-                body: candleBody,
-                averageBody: avg,
-                threshold
-            };
-        }
+    if (isLow) {
+      lows.push({
+        index: i,
+        price: c.low,
+        time: formatTime(c),
+      });
     }
+  }
 
-    return null;
+  return { highs, lows };
 }
 
-// ------------------------------------------------------------
-// BOS / CHoCH
-// ------------------------------------------------------------
-
-function detectStructureBreak(candles, swings, sweep, displacement) {
-    if (!sweep || !displacement) return null;
-
-    const direction = sweep.direction;
-    const index = displacement.index;
-
-    const previousTrend = trendBefore(swings, index);
-
-    const candidates = (
-        direction === "BULLISH"
-            ? swings.swingHighs
-            : swings.swingLows
-    ).filter(s =>
-        s.index < index &&
-        s.index > sweep.index - 40
-    );
-
-    const levelSwing = candidates.at(-1);
-
-    if (!levelSwing) return null;
-
-    const c = candles[index];
-
-    const broke = direction === "BULLISH"
-        ? c.close > levelSwing.price
-        : c.close < levelSwing.price;
-
-    if (!broke) return null;
-
-    const bos = previousTrend === direction;
-
-    const choch =
-        previousTrend !== "NEUTRAL" &&
-        previousTrend !== direction;
-
-    if (!bos && !choch) return null;
-
-    return {
-        detected: true,
-
-        direction,
-        previousTrend,
-
-        bos,
-        choch,
-
-        index,
-        time: c.time,
-
-        brokenLevel: levelSwing.price
-    };
-}
-
-// ------------------------------------------------------------
-// FAIR VALUE GAPS
-// ------------------------------------------------------------
-
-function detectFVGs(candles, displacement, structureBreak) {
-    if (!displacement || !structureBreak) return [];
-
-    const gaps = [];
-
-    for (let i = 2; i < candles.length; i++) {
-        if (i <= structureBreak.index) continue;
-
-        const a = candles[i - 2];
-        const c = candles[i];
-
-        if (
-            displacement.direction === "BULLISH" &&
-            a.high < c.low
-        ) {
-            gaps.push({
-                detected: true,
-                direction: "BULLISH",
-
-                high: c.low,
-                low: a.high,
-
-                index: i,
-                time: c.time
-            });
-        }
-
-        if (
-            displacement.direction === "BEARISH" &&
-            a.low > c.high
-        ) {
-            gaps.push({
-                detected: true,
-                direction: "BEARISH",
-
-                high: a.low,
-                low: c.high,
-
-                index: i,
-                time: c.time
-            });
-        }
-    }
-
-    return gaps;
-}
-
-// ------------------------------------------------------------
-// STAGE 3.8: FVG QUALITY + INVALIDATION
-// ------------------------------------------------------------
-
-function analyzeFVG(candles, fvg, settings) {
-    const lastIndex = candles.length - 1;
-
-    let invalidated = false;
-    let firstRetestIndex = null;
-    let latestRetestIndex = null;
-
-    for (let i = fvg.index + 1; i <= lastIndex; i++) {
-        const c = candles[i];
-
-        if (
-            fvg.direction === "BULLISH" &&
-            c.close < fvg.low
-        ) {
-            invalidated = true;
-            break;
-        }
-
-        if (
-            fvg.direction === "BEARISH" &&
-            c.close > fvg.high
-        ) {
-            invalidated = true;
-            break;
-        }
-
-        const overlaps =
-            c.low <= fvg.high &&
-            c.high >= fvg.low;
-
-        if (overlaps) {
-            if (firstRetestIndex === null) {
-                firstRetestIndex = i;
-            }
-
-            latestRetestIndex = i;
-        }
-    }
-
-    const c = candles[lastIndex];
-
-    const overlapsCurrent =
-        lastIndex > fvg.index &&
-        c.low <= fvg.high &&
-        c.high >= fvg.low;
-
-    // Stronger retest:
-    // BUY: tests the zone and closes above its upper boundary.
-    // SELL: tests the zone and closes below its lower boundary.
-    const closesBeyondZone =
-        fvg.direction === "BULLISH"
-            ? c.close > fvg.high
-            : c.close < fvg.low;
-
-    const correctDirection =
-        fvg.direction === "BULLISH"
-            ? bullish(c)
-            : bearish(c);
-
-    const recentAverageBody = averageBody(
-        candles,
-        lastIndex,
-        10
-    );
-
-    const currentRange = c.high - c.low;
-
-    const rangeLimit = recentAverageBody > 0
-        ? recentAverageBody * settings.maxRetestRangeMultiple
-        : 0;
-
-    const candleSizeValid =
-        rangeLimit > 0 &&
-        currentRange <= rangeLimit;
-
-    const currentRetest =
-        !invalidated &&
-        overlapsCurrent &&
-        closesBeyondZone &&
-        correctDirection &&
-        candleSizeValid;
-
-    let position = "INSIDE";
-
-    if (c.close > fvg.high) position = "ABOVE";
-    if (c.close < fvg.low) position = "BELOW";
-
-    return {
-        detected: true,
-
-        direction: fvg.direction,
-
-        high: fvg.high,
-        low: fvg.low,
-
-        index: fvg.index,
-        time: fvg.time,
-
-        invalidated,
-
-        retest: latestRetestIndex !== null,
-        firstRetestIndex,
-        latestRetestIndex,
-
-        currentRetest,
-
-        quality: {
-            overlapsZone: Boolean(overlapsCurrent),
-            closesBeyondZone,
-            correctDirection,
-
-            currentRange,
-            averageBody: recentAverageBody,
-            rangeLimit,
-
-            candleSizeValid
-        },
-
-        position
-    };
-}
-
-// ------------------------------------------------------------
-// POSITION SIZING
-// ------------------------------------------------------------
-
-function calculatePositionSize(
-    riskDistance,
-    settings
+/**
+ * Determine the trend from confirmed swing structure.
+ */
+function getTrendFromSwings(
+  swings,
+  beforeIndex = Infinity
 ) {
-    const balance = num(settings.accountBalance);
-    const riskPercent = num(settings.riskPercent);
-    const valuePerUnit = num(settings.valuePerPriceUnitPerLot);
+  const highs = swings.highs.filter(
+    s => s.index < beforeIndex
+  );
 
-    if (
-        !Number.isFinite(balance) ||
-        balance <= 0 ||
-        !Number.isFinite(riskPercent) ||
-        riskPercent <= 0 ||
-        riskPercent > 100
-    ) {
-        return {
-            calculated: false,
-            reason: "Invalid account balance or risk percentage."
-        };
-    }
+  const lows = swings.lows.filter(
+    s => s.index < beforeIndex
+  );
 
-    const riskAmount = balance * riskPercent / 100;
+  if (highs.length < 2 || lows.length < 2) {
+    return 'NEUTRAL';
+  }
 
-    if (
-        !Number.isFinite(valuePerUnit) ||
-        valuePerUnit <= 0
-    ) {
-        return {
-            calculated: false,
-            reason:
-                "Provide the broker-specific value per 1.0 price-unit move per 1.0 lot.",
-            riskAmount: round(riskAmount, 2),
-            lotSize: null
-        };
-    }
+  const h1 = highs[highs.length - 2].price;
+  const h2 = highs[highs.length - 1].price;
 
-    const rawLots = riskAmount / (
-        riskDistance * valuePerUnit
-    );
+  const l1 = lows[lows.length - 2].price;
+  const l2 = lows[lows.length - 1].price;
 
-    const step = num(settings.lotStep);
+  if (h2 > h1 && l2 > l1) {
+    return 'BULLISH';
+  }
 
-    if (!Number.isFinite(step) || step <= 0) {
-        return {
-            calculated: false,
-            reason: "Invalid broker lot step.",
-            riskAmount: round(riskAmount, 2),
-            lotSize: null
-        };
-    }
+  if (h2 < h1 && l2 < l1) {
+    return 'BEARISH';
+  }
 
-    // Round DOWN so the calculated volume does not exceed
-    // the risk amount because of lot-step rounding.
-    const lotSize = Math.floor(rawLots / step) * step;
-
-    if (lotSize < settings.minLot) {
-        return {
-            calculated: false,
-            reason:
-                "Calculated lot size is below the broker's minimum lot size.",
-            riskAmount: round(riskAmount, 2),
-            rawLots: round(rawLots, 4),
-            lotSize: null
-        };
-    }
-
-    if (lotSize > settings.maxLot) {
-        return {
-            calculated: false,
-            reason:
-                "Calculated lot size exceeds the configured maximum.",
-            riskAmount: round(riskAmount, 2),
-            rawLots: round(rawLots, 4),
-            lotSize: null
-        };
-    }
-
-    return {
-        calculated: true,
-
-        accountBalance: round(balance, 2),
-        riskPercent: round(riskPercent, 3),
-
-        riskAmount: round(riskAmount, 2),
-
-        rawLots: round(rawLots, 4),
-        lotSize: round(lotSize, 4),
-
-        valuePerPriceUnitPerLot: round(valuePerUnit, 6)
-    };
+  return 'NEUTRAL';
 }
 
-// ------------------------------------------------------------
-// TRADE VALIDATION
-// ------------------------------------------------------------
+/**
+ * Detect liquidity sweeps.
+ *
+ * Bullish sweep:
+ * Price moves below a previous swing low and closes back above it.
+ *
+ * Bearish sweep:
+ * Price moves above a previous swing high and closes back below it.
+ */
+function detectSweep(
+  candles,
+  swings,
+  lookback = 35
+) {
+  const start = Math.max(
+    0,
+    candles.length - lookback
+  );
 
-function calculateTrade(sweep, displacement, fvg, candles, settings) {
+  for (
+    let i = candles.length - 1;
+    i >= start;
+    i--
+  ) {
+    const c = candles[i];
+
+    const priorHighs = swings.highs.filter(
+      s => s.index < i
+    );
+
+    const priorLows = swings.lows.filter(
+      s => s.index < i
+    );
+
+    const lastHigh =
+      priorHighs[priorHighs.length - 1];
+
+    const lastLow =
+      priorLows[priorLows.length - 1];
+
+    // Sell-side liquidity sweep: potential bullish reversal.
     if (
-        !sweep ||
-        !displacement ||
-        !fvg ||
-        fvg.invalidated ||
-        !fvg.currentRetest
+      lastLow &&
+      c.low < lastLow.price &&
+      c.close > lastLow.price
     ) {
-        return null;
+      return {
+        detected: true,
+        direction: 'BULLISH',
+        sweepDirection: 'BULLISH',
+        type: 'SELL-SIDE-SWEEP',
+
+        lowSweep: true,
+        highSweep: false,
+        rejection: true,
+
+        index: i,
+        time: formatTime(c),
+
+        liquidityLevel: lastLow.price,
+        sweepLow: c.low,
+        sweepHigh: c.high,
+      };
     }
 
-    const current = candles.at(-1);
+    // Buy-side liquidity sweep: potential bearish reversal.
+    if (
+      lastHigh &&
+      c.high > lastHigh.price &&
+      c.close < lastHigh.price
+    ) {
+      return {
+        detected: true,
+        direction: 'BEARISH',
+        sweepDirection: 'BEARISH',
+        type: 'BUY-SIDE-SWEEP',
 
-    const entry = current.close;
+        lowSweep: false,
+        highSweep: true,
+        rejection: true,
 
-    // Provisional buffer. Calibrate this to the symbol's
-    // tick size and broker contract specifications.
-    const buffer = Math.abs(entry) >= 100
-        ? 0.10
-        : 0.0001;
+        index: i,
+        time: formatTime(c),
 
-    const stopLoss = sweep.direction === "BULLISH"
+        liquidityLevel: lastHigh.price,
+        sweepLow: c.low,
+        sweepHigh: c.high,
+      };
+    }
+  }
+
+  return {
+    detected: false,
+    direction: 'NONE',
+    sweepDirection: 'NONE',
+    type: 'NONE',
+
+    lowSweep: false,
+    highSweep: false,
+    rejection: false,
+
+    index: null,
+    time: null,
+    liquidityLevel: null,
+    sweepLow: null,
+    sweepHigh: null,
+  };
+}
+
+/**
+ * Detect displacement after a liquidity sweep.
+ */
+function detectDisplacement(
+  candles,
+  sweep,
+  options
+) {
+  if (!sweep.detected) {
+    return {
+      detected: false,
+      direction: 'NONE',
+      index: null,
+      time: null,
+      body: null,
+      averageBody: null,
+      threshold: null,
+      linkedToSweep: false,
+    };
+  }
+
+  const end = Math.min(
+    candles.length - 1,
+    sweep.index + options.displacementLookback
+  );
+
+  for (
+    let i = sweep.index + 1;
+    i <= end;
+    i++
+  ) {
+    const priorBodies = candles
+      .slice(Math.max(0, i - 10), i)
+      .map(candleBody);
+
+    const avgBody = average(priorBodies);
+    const body = candleBody(candles[i]);
+
+    const threshold = Math.max(
+      avgBody * options.displacementMultiplier,
+      0
+    );
+
+    const matchesDirection =
+      sweep.direction === 'BULLISH'
+        ? bullish(candles[i])
+        : bearish(candles[i]);
+
+    if (
+      matchesDirection &&
+      body > 0 &&
+      body >= threshold
+    ) {
+      return {
+        detected: true,
+        direction: sweep.direction,
+        index: i,
+        time: formatTime(candles[i]),
+        body,
+        averageBody: avgBody,
+        threshold,
+        linkedToSweep: true,
+      };
+    }
+  }
+
+  return {
+    detected: false,
+    direction: 'NONE',
+    index: null,
+    time: null,
+    body: null,
+    averageBody: null,
+    threshold: null,
+    linkedToSweep: false,
+  };
+}
+
+/**
+ * Detect BOS or CHoCH on the displacement candle.
+ */
+function detectStructureBreak(
+  candles,
+  swings,
+  displacement
+) {
+  if (!displacement.detected) {
+    return {
+      detected: false,
+      bos: false,
+      choch: false,
+      direction: 'NONE',
+      previousTrend: 'NEUTRAL',
+      index: null,
+      time: null,
+      brokenLevel: null,
+    };
+  }
+
+  const i = displacement.index;
+  const c = candles[i];
+
+  const priorTrend = getTrendFromSwings(
+    swings,
+    i
+  );
+
+  const priorHighs = swings.highs.filter(
+    s => s.index < i
+  );
+
+  const priorLows = swings.lows.filter(
+    s => s.index < i
+  );
+
+  const high =
+    priorHighs[priorHighs.length - 1];
+
+  const low =
+    priorLows[priorLows.length - 1];
+
+  const upBreak = Boolean(
+    high &&
+    c.close > high.price &&
+    displacement.direction === 'BULLISH'
+  );
+
+  const downBreak = Boolean(
+    low &&
+    c.close < low.price &&
+    displacement.direction === 'BEARISH'
+  );
+
+  if (!upBreak && !downBreak) {
+    return {
+      detected: false,
+      bos: false,
+      choch: false,
+      direction: 'NONE',
+      previousTrend: priorTrend,
+      index: null,
+      time: null,
+      brokenLevel: null,
+    };
+  }
+
+  const direction = upBreak
+    ? 'BULLISH'
+    : 'BEARISH';
+
+  const bos = priorTrend === direction;
+
+  const choch =
+    priorTrend !== 'NEUTRAL' &&
+    priorTrend !== direction;
+
+  return {
+    detected: true,
+    bos,
+    choch,
+    direction,
+    previousTrend: priorTrend,
+    index: i,
+    time: formatTime(c),
+    brokenLevel: upBreak
+      ? high.price
+      : low.price,
+  };
+}
+
+/**
+ * Detect a Fair Value Gap after the structure break.
+ */
+function detectFvg(
+  candles,
+  structureBreak,
+  direction,
+  lookback = 12
+) {
+  if (!structureBreak.detected) {
+    return {
+      detected: false,
+      direction: 'NONE',
+      high: null,
+      low: null,
+      index: null,
+      time: null,
+      invalidated: false,
+    };
+  }
+
+  const start = Math.max(
+    2,
+    structureBreak.index + 1
+  );
+
+  const end = Math.min(
+    candles.length - 1,
+    structureBreak.index + lookback
+  );
+
+  for (let i = start; i <= end; i++) {
+    const first = candles[i - 2];
+    const third = candles[i];
+
+    // Bullish FVG.
+    if (
+      direction === 'BULLISH' &&
+      third.low > first.high
+    ) {
+      return {
+        detected: true,
+        direction,
+        high: third.low,
+        low: first.high,
+        index: i,
+        time: formatTime(third),
+        invalidated: false,
+      };
+    }
+
+    // Bearish FVG.
+    if (
+      direction === 'BEARISH' &&
+      third.high < first.low
+    ) {
+      return {
+        detected: true,
+        direction,
+        high: first.low,
+        low: third.high,
+        index: i,
+        time: formatTime(third),
+        invalidated: false,
+      };
+    }
+  }
+
+  return {
+    detected: false,
+    direction: 'NONE',
+    high: null,
+    low: null,
+    index: null,
+    time: null,
+    invalidated: false,
+  };
+}
+
+/**
+ * Check whether price has invalidated the FVG.
+ */
+function checkFvgInvalidation(
+  candles,
+  fvg
+) {
+  if (!fvg.detected) return false;
+
+  for (
+    let i = fvg.index + 1;
+    i < candles.length;
+    i++
+  ) {
+    if (
+      fvg.direction === 'BULLISH' &&
+      candles[i].close < fvg.low
+    ) {
+      return true;
+    }
+
+    if (
+      fvg.direction === 'BEARISH' &&
+      candles[i].close > fvg.high
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Validate the FVG retest.
+ *
+ * The latest candle must overlap the FVG, close beyond
+ * the relevant edge, agree with the trade direction,
+ * and remain within the candle-size filter.
+ */
+function analyzeRetest(
+  candles,
+  fvg,
+  options
+) {
+  if (!fvg.detected || !candles.length) {
+    return {
+      detected: false,
+      currentCandle: false,
+      index: null,
+      time: null,
+      firstRetestIndex: null,
+      latestRetestIndex: null,
+
+      quality: {
+        overlapsZone: false,
+        closesBeyondZone: false,
+        correctDirection: false,
+        currentRange: null,
+        averageBody: null,
+        rangeLimit: null,
+        candleSizeValid: false,
+        position: 'UNKNOWN',
+      },
+    };
+  }
+
+  let first = null;
+  let latest = null;
+
+  for (
+    let i = fvg.index + 1;
+    i < candles.length;
+    i++
+  ) {
+    const c = candles[i];
+
+    const overlaps =
+      c.low <= fvg.high &&
+      c.high >= fvg.low;
+
+    if (overlaps) {
+      if (first === null) first = i;
+      latest = i;
+    }
+  }
+
+  const currentIndex = candles.length - 1;
+  const c = candles[currentIndex];
+
+  const overlapsZone =
+    c.low <= fvg.high &&
+    c.high >= fvg.low;
+
+  const closesBeyondZone =
+    fvg.direction === 'BULLISH'
+      ? c.close > fvg.high
+      : c.close < fvg.low;
+
+  const correctDirection =
+    fvg.direction === 'BULLISH'
+      ? bullish(c)
+      : bearish(c);
+
+  const currentRange = candleRange(c);
+
+  const averageBody = average(
+    candles
+      .slice(
+        Math.max(0, currentIndex - 10),
+        currentIndex
+      )
+      .map(candleBody)
+  );
+
+  const rangeLimit =
+    averageBody *
+    options.maximumRetestRangeMultiple;
+
+  const candleSizeValid =
+    averageBody > 0 &&
+    currentRange <= rangeLimit;
+
+  const position =
+    c.close > fvg.high
+      ? 'ABOVE'
+      : c.close < fvg.low
+        ? 'BELOW'
+        : 'INSIDE';
+
+  const currentRetest =
+    overlapsZone &&
+    closesBeyondZone &&
+    correctDirection &&
+    candleSizeValid;
+
+  return {
+    detected: first !== null,
+    currentCandle: currentRetest,
+
+    index: latest,
+    time:
+      latest === null
+        ? null
+        : formatTime(candles[latest]),
+
+    firstRetestIndex: first,
+    latestRetestIndex: latest,
+
+    quality: {
+      overlapsZone,
+      closesBeyondZone,
+      correctDirection,
+      currentRange,
+      averageBody,
+      rangeLimit,
+      candleSizeValid,
+      position,
+    },
+  };
+}
+
+/**
+ * Choose the stop-loss buffer.
+ */
+function getStopBuffer(
+  price,
+  configured
+) {
+  if (
+    Number.isFinite(configured) &&
+    configured >= 0
+  ) {
+    return configured;
+  }
+
+  return price >= 100 ? 0.1 : 0.0001;
+}
+
+/**
+ * Calculate position size only when the broker-specific
+ * price-unit value has been configured.
+ */
+function calculatePositionSize(
+  riskMoney,
+  riskDistance,
+  options
+) {
+  const value = num(
+    options.valuePerPriceUnitPerLot,
+    null
+  );
+
+  if (!(value > 0)) {
+    return {
+      calculated: false,
+      lots: null,
+      riskMoney,
+      valuePerPriceUnitPerLot: null,
+
+      reason:
+        'Broker-specific valuePerPriceUnitPerLot is required before lot size can be calculated.',
+    };
+  }
+
+  if (
+    !(riskDistance > 0) ||
+    !(riskMoney > 0)
+  ) {
+    return {
+      calculated: false,
+      lots: null,
+      riskMoney,
+      valuePerPriceUnitPerLot: value,
+
+      reason:
+        'Risk distance and risk amount must be greater than zero.',
+    };
+  }
+
+  const rawLots =
+    riskMoney /
+    (riskDistance * value);
+
+  const step = Math.max(
+    num(options.lotStep, 0.01),
+    0.00000001
+  );
+
+  let lots =
+    Math.floor(rawLots / step) * step;
+
+  lots = Math.max(0, lots);
+
+  if (Number.isFinite(options.maxLot)) {
+    lots = Math.min(lots, options.maxLot);
+  }
+
+  lots = round(lots, 4);
+
+  if (
+    lots <
+    num(options.minLot, 0.01)
+  ) {
+    return {
+      calculated: false,
+      lots: null,
+      rawLots: round(rawLots, 6),
+      riskMoney,
+      valuePerPriceUnitPerLot: value,
+
+      reason:
+        'Calculated lot size is below the broker minimum lot.',
+    };
+  }
+
+  return {
+    calculated: true,
+    lots,
+    rawLots: round(rawLots, 6),
+    riskMoney,
+    valuePerPriceUnitPerLot: value,
+    reason: null,
+  };
+}
+
+/**
+ * Default response schema.
+ */
+function baseResult(
+  symbol,
+  interval,
+  candleCount,
+  status = 'WAIT'
+) {
+  return {
+    status,
+    engine: ENGINE_NAME,
+    version: ENGINE_VERSION,
+
+    symbol: symbol || 'UNKNOWN',
+    interval: interval || 'unknown',
+    candleCount,
+
+    candleOrder: 'ASCENDING',
+
+    trend: 'NEUTRAL',
+    structure: 'UNDEFINED',
+
+    bos: false,
+    bosDirection: 'NONE',
+
+    choch: false,
+    chochDirection: 'NONE',
+
+    currentPrice: null,
+
+    swingHigh: null,
+    swingLow: null,
+
+    previousSwingHigh: null,
+    previousSwingLow: null,
+
+    lowerHigh: false,
+    lowerLow: false,
+    higherHigh: false,
+    higherLow: false,
+
+    lastSwingHighTime: null,
+    lastSwingLowTime: null,
+
+    liquidity: {
+      status: 'NO SWEEP',
+      detected: false,
+      sweepDirection: 'NONE',
+      rejection: false,
+      lowSweep: false,
+      highSweep: false,
+      liquidityLevel: null,
+      sweepLow: null,
+      sweepHigh: null,
+      time: null,
+    },
+
+    displacement: {
+      detected: false,
+      direction: 'NONE',
+      index: null,
+      time: null,
+      body: null,
+      averageBody: null,
+      threshold: null,
+      linkedToSweep: false,
+    },
+
+    fvg: {
+      detected: false,
+      direction: 'NONE',
+      high: null,
+      low: null,
+      index: null,
+      time: null,
+      invalidated: false,
+      retest: false,
+      firstRetestIndex: null,
+      latestRetestIndex: null,
+      currentRetest: false,
+      quality: null,
+    },
+
+    setup: {
+      status: 'WAITING',
+      sweepConfirmed: false,
+      displacementConfirmed: false,
+      structureBreakConfirmed: false,
+      fvgConfirmed: false,
+      fvgRetest: false,
+      fvgInvalidated: false,
+    },
+
+    entry: {
+      status: 'WAIT',
+      confirmed: false,
+      direction: 'NONE',
+      price: null,
+      stopLoss: null,
+      takeProfit1: null,
+      takeProfit2: null,
+      takeProfit3: null,
+      riskDistance: null,
+      riskReward: null,
+      positionSize: null,
+    },
+
+    riskFilter: {
+      accountBalance: null,
+      riskPercent: null,
+      maxRiskDistance: null,
+      maximumRetestRangeMultiple: null,
+      riskDistance: null,
+      accepted: false,
+      reason: 'Waiting for a complete setup.',
+    },
+
+    confirmationScore: {
+      score: 0,
+      maximum: 8,
+      percentage: 0,
+      validThreshold: false,
+    },
+
+    sequence: {
+      sweep: { detected: false },
+      displacement: { detected: false },
+      structureBreak: { detected: false },
+      fvg: { detected: false },
+      retest: {
+        detected: false,
+        currentCandle: false,
+      },
+      validOrder: false,
+      invalidReason:
+        'Insufficient data or incomplete setup.',
+      complete: false,
+    },
+
+    candleMetrics: null,
+  };
+}
+
+/**
+ * Main TRUSTFX analysis function.
+ */
+export function analyzeMarketStructure(
+  inputCandles,
+  config = {}
+) {
+  const options = {
+    ...DEFAULTS,
+    ...config,
+  };
+
+  const symbol =
+    config.symbol ||
+    config.symbolName ||
+    'UNKNOWN';
+
+  const interval =
+    config.interval ||
+    config.timeframe ||
+    'unknown';
+
+  const candles = normalizeCandles(inputCandles);
+
+  const result = baseResult(
+    symbol,
+    interval,
+    candles.length
+  );
+
+  if (candles.length < 12) {
+    result.status = 'WAIT';
+
+    result.sequence.invalidReason =
+      'At least 12 valid candles are required.';
+
+    return result;
+  }
+
+  const last = candles[candles.length - 1];
+
+  const swings = detectSwings(
+    candles,
+    Math.max(
+      1,
+      Math.floor(options.swingStrength)
+    )
+  );
+
+  const highs = swings.highs;
+  const lows = swings.lows;
+
+  const trend = getTrendFromSwings(swings);
+
+  const lastHigh =
+    highs[highs.length - 1] || null;
+
+  const prevHigh =
+    highs[highs.length - 2] || null;
+
+  const lastLow =
+    lows[lows.length - 1] || null;
+
+  const prevLow =
+    lows[lows.length - 2] || null;
+
+  const higherHigh = Boolean(
+    lastHigh &&
+    prevHigh &&
+    lastHigh.price > prevHigh.price
+  );
+
+  const lowerHigh = Boolean(
+    lastHigh &&
+    prevHigh &&
+    lastHigh.price < prevHigh.price
+  );
+
+  const higherLow = Boolean(
+    lastLow &&
+    prevLow &&
+    lastLow.price > prevLow.price
+  );
+
+  const lowerLow = Boolean(
+    lastLow &&
+    prevLow &&
+    lastLow.price < prevLow.price
+  );
+
+  const structure =
+    higherHigh && higherLow
+      ? 'HH + HL'
+      : lowerHigh && lowerLow
+        ? 'LH + LL'
+        : 'MIXED';
+
+  // Analyze the complete trading sequence.
+  const sweep = detectSweep(
+    candles,
+    swings,
+    options.sweepLookback
+  );
+
+  const displacement = detectDisplacement(
+    candles,
+    sweep,
+    options
+  );
+
+  const structureBreak = detectStructureBreak(
+    candles,
+    swings,
+    displacement
+  );
+
+  const fvg = detectFvg(
+    candles,
+    structureBreak,
+    structureBreak.direction,
+    options.fvgLookback
+  );
+
+  fvg.invalidated = checkFvgInvalidation(
+    candles,
+    fvg
+  );
+
+  const retest = analyzeRetest(
+    candles,
+    fvg,
+    options
+  );
+
+  const chronological = Boolean(
+    sweep.detected &&
+    displacement.detected &&
+    structureBreak.detected &&
+    fvg.detected &&
+    sweep.index < displacement.index &&
+    displacement.index <= structureBreak.index &&
+    structureBreak.index < fvg.index &&
+    fvg.index < candles.length
+  );
+
+  const directionMatches = Boolean(
+    sweep.direction === displacement.direction &&
+    displacement.direction === structureBreak.direction &&
+    structureBreak.direction === fvg.direction
+  );
+
+  const validOrder =
+    chronological &&
+    directionMatches;
+
+  const retestValid = Boolean(
+    retest.currentCandle &&
+    !fvg.invalidated &&
+    validOrder
+  );
+
+  const price = last.close;
+
+  const buffer = getStopBuffer(
+    price,
+    options.stopBuffer
+  );
+
+  let stopLoss = null;
+  let riskDistance = null;
+
+  let tp1 = null;
+  let tp2 = null;
+  let tp3 = null;
+
+  let riskReward = null;
+  let positionSize = null;
+
+  let entryConfirmed = false;
+  let entryDirection = 'NONE';
+  let entryStatus = 'WAIT';
+
+  let riskReason =
+    'Waiting for a quality FVG retest.';
+
+  if (retestValid) {
+    entryDirection = fvg.direction;
+
+    stopLoss =
+      entryDirection === 'BULLISH'
         ? sweep.sweepLow - buffer
         : sweep.sweepHigh + buffer;
 
-    const riskDistance = sweep.direction === "BULLISH"
-        ? entry - stopLoss
-        : stopLoss - entry;
+    riskDistance = Math.abs(
+      price - stopLoss
+    );
 
-    if (
-        !Number.isFinite(riskDistance) ||
-        riskDistance <= 0
-    ) {
-        return {
-            confirmed: false,
-            reason: "Invalid stop-loss distance."
-        };
+    const riskMoney =
+      options.accountBalance *
+      (options.riskPercent / 100);
+
+    positionSize = calculatePositionSize(
+      riskMoney,
+      riskDistance,
+      options
+    );
+
+    const riskWithinLimits =
+      riskDistance >= options.minRiskDistance &&
+      riskDistance <= options.maxRiskDistance;
+
+    if (!riskWithinLimits) {
+      riskReason =
+        `Risk distance ${round(riskDistance, 5)} is outside configured limits.`;
+    } else if (!positionSize.calculated) {
+      riskReason = positionSize.reason;
+    } else {
+      tp1 =
+        entryDirection === 'BULLISH'
+          ? price + riskDistance * 1.5
+          : price - riskDistance * 1.5;
+
+      tp2 =
+        entryDirection === 'BULLISH'
+          ? price + riskDistance * 2
+          : price - riskDistance * 2;
+
+      tp3 =
+        entryDirection === 'BULLISH'
+          ? price + riskDistance * 3
+          : price - riskDistance * 3;
+
+      riskReward = 3;
+
+      entryConfirmed = Boolean(
+        positionSize?.calculated === true &&
+        riskWithinLimits
+      );
+
+      entryStatus = entryConfirmed
+        ? 'CONFIRMED'
+        : 'WAIT';
+
+      riskReason = entryConfirmed
+        ? 'Setup confirmed and position size calculated.'
+        : 'Position size has not been validated.';
     }
+  }
+
+  /*
+   * CRITICAL VALIDATION:
+   * An existing positionSize object is not enough.
+   * Its calculated property must explicitly be true.
+   */
+  entryConfirmed = Boolean(
+    entryConfirmed &&
+    positionSize?.calculated === true
+  );
+
+  if (!entryConfirmed) {
+    entryStatus = 'WAIT';
+  }
+
+  const scoreItems = [
+    sweep.detected,
+    displacement.detected,
+    structureBreak.detected,
+    fvg.detected,
+    validOrder,
+    !fvg.invalidated,
+    retest.currentCandle,
+    entryConfirmed,
+  ];
+
+  const score = scoreItems.filter(
+    Boolean
+  ).length;
+
+  const percentage = Math.round(
+    (score / scoreItems.length) * 100
+  );
+
+  result.status = entryConfirmed
+    ? 'SIGNAL'
+    : 'WAIT';
+
+  result.symbol = symbol;
+  result.interval = interval;
+  result.candleCount = candles.length;
+
+  result.trend = trend;
+  result.structure = structure;
+
+  result.bos = structureBreak.bos;
+
+  result.bosDirection =
+    structureBreak.bos
+      ? structureBreak.direction
+      : 'NONE';
+
+  result.choch = structureBreak.choch;
+
+  result.chochDirection =
+    structureBreak.choch
+      ? structureBreak.direction
+      : 'NONE';
 
-    if (riskDistance > settings.maxRiskDistance) {
-        return {
-            confirmed: false,
-            reason: "Stop-loss distance exceeds the configured maximum.",
-            entry: round(entry),
-            stopLoss: round(stopLoss),
-            riskDistance: round(riskDistance),
-            maxRiskDistance: settings.maxRiskDistance
-        };
-    }
-
-    const multiplier = sweep.direction === "BULLISH" ? 1 : -1;
-
-    const takeProfit1 = entry + multiplier * riskDistance * 1.5;
-    const takeProfit2 = entry + multiplier * riskDistance * 2;
-    const takeProfit3 = entry + multiplier * riskDistance * 3;
-
-    const positionSize = calculatePositionSize(
-        riskDistance,
-        settings
-    );
-
-    return {
-        confirmed: true,
-
-        direction: sweep.direction,
-        signal: sweep.direction === "BULLISH" ? "BUY" : "SELL",
-
-        price: round(entry),
-        stopLoss: round(stopLoss),
-
-        takeProfit1: round(takeProfit1),
-        takeProfit2: round(takeProfit2),
-        takeProfit3: round(takeProfit3),
-
-        riskDistance: round(riskDistance),
-
-        riskReward: {
-            tp1: 1.5,
-            tp2: 2,
-            tp3: 3
-        },
-
-        positionSize
-    };
-}
-
-// ------------------------------------------------------------
-// MAIN ANALYSIS
-// ------------------------------------------------------------
-
-export function analyzeMarketStructure(inputCandles, options = {}) {
-    const settings = mergeOptions(options);
-
-    const candles = normalizeCandles(inputCandles);
-
-    const symbol = settings.symbol ?? "UNKNOWN";
-    const interval = settings.interval ?? "15min";
-
-    if (candles.length < 20) {
-        return {
-            status: "WAIT",
-            engine: ENGINE_NAME,
-            version: ENGINE_VERSION,
-            symbol,
-            interval,
-            candleCount: candles.length,
-
-            analysis: {
-                status: "WAIT",
-                reason: "At least 20 valid candles are required."
-            }
-        };
-    }
-
-    const current = candles.at(-1);
-
-    const swings = detectSwings(
-        candles,
-        settings.swingStrength
-    );
-
-    const trend = determineTrend(swings);
-
-    const highs = swings.swingHighs;
-    const lows = swings.swingLows;
-
-    const latestHigh = highs.at(-1);
-    const previousHigh = highs.at(-2);
-
-    const latestLow = lows.at(-1);
-    const previousLow = lows.at(-2);
-
-    const sweep = detectSweep(
-        candles,
-        swings,
-        settings.sweepLookback
-    );
-
-    const displacement = detectDisplacement(
-        candles,
-        sweep,
-        settings.displacementLookahead
-    );
-
-    const structureBreak = detectStructureBreak(
-        candles,
-        swings,
-        sweep,
-        displacement
-    );
-
-    const gaps = detectFVGs(
-        candles,
-        displacement,
-        structureBreak
-    );
-
-    let fvg = null;
-
-    // Prefer the most recent valid FVG. Continue checking
-    // older gaps only if the newer gap has been invalidated.
-    for (let i = gaps.length - 1; i >= 0; i--) {
-        const candidate = analyzeFVG(
-            candles,
-            gaps[i],
-            settings
-        );
-
-        if (!candidate.invalidated) {
-            fvg = candidate;
-
-            if (candidate.currentRetest) break;
-        }
-    }
-
-    const sweepConfirmed = Boolean(sweep);
-
-    const displacementConfirmed = Boolean(
-        sweep &&
-        displacement &&
-        sweep.direction === displacement.direction
-    );
-
-    const structureBreakConfirmed = Boolean(
-        structureBreak &&
-        (structureBreak.bos || structureBreak.choch)
-    );
-
-    const fvgConfirmed = Boolean(
-        fvg &&
-        sweep &&
-        fvg.direction === sweep.direction
-    );
-
-    const fvgRetest = Boolean(fvg?.currentRetest);
-
-    const fvgInvalidated = Boolean(fvg?.invalidated);
-
-    let trade = null;
-
-    if (
-        sweepConfirmed &&
-        displacementConfirmed &&
-        structureBreakConfirmed &&
-        fvgConfirmed &&
-        fvgRetest &&
-        !fvgInvalidated
-    ) {
-        trade = calculateTrade(
-            sweep,
-            displacement,
-            fvg,
-            candles,
-            settings
-        );
-    }
-
-    const entryConfirmed = Boolean(
-        trade?.confirmed &&
-        trade?.positionSize
-    );
-
-    const entryStatus = entryConfirmed
-        ? trade.signal
-        : "WAIT";
-
-    const confirmations = [
-        sweepConfirmed,
-        displacementConfirmed,
-        structureBreakConfirmed,
-        fvgConfirmed,
-        fvgRetest,
-        !fvgInvalidated,
-        Boolean(sweep && displacement &&
-            sweep.direction === displacement.direction),
-        Boolean(structureBreak &&
-            structureBreak.direction === sweep?.direction)
-    ];
-
-    const score = confirmations.filter(Boolean).length;
-
-    let invalidReason = null;
-
-    if (!sweepConfirmed) {
-        invalidReason = "No confirmed liquidity sweep.";
-    } else if (!displacementConfirmed) {
-        invalidReason = "Waiting for displacement.";
-    } else if (!structureBreakConfirmed) {
-        invalidReason = "Waiting for valid BOS or CHoCH.";
-    } else if (!fvgConfirmed) {
-        invalidReason = "Waiting for a valid directional FVG.";
-    } else if (fvgInvalidated) {
-        invalidReason = "FVG invalidated.";
-    } else if (!fvgRetest) {
-        invalidReason = "Waiting for a quality FVG retest.";
-    } else if (trade && !trade.confirmed) {
-        invalidReason = trade.reason;
-    } else if (!entryConfirmed) {
-        invalidReason =
-            trade?.positionSize?.reason ??
-            "Position sizing could not be validated.";
-    }
-
-    const positionSize = trade?.positionSize ?? null;
-
-    const range = current.high - current.low;
-
-    return {
-        status: entryStatus,
-
-        engine: ENGINE_NAME,
-        version: ENGINE_VERSION,
-
-        symbol,
-        interval,
-
-        candleCount: candles.length,
-
-        analysis: {
-            status: entryStatus,
-
-            candleOrder: "ASCENDING",
-            candleCount: candles.length,
-
-            trend,
-
-            structure: trend === "BULLISH"
-                ? "HH + HL"
-                : trend === "BEARISH"
-                    ? "LH + LL"
-                    : "MIXED",
-
-            bos: Boolean(structureBreak?.bos),
-            bosDirection: structureBreak?.bos
-                ? structureBreak.direction
-                : "NONE",
-
-            choch: Boolean(structureBreak?.choch),
-            chochDirection: structureBreak?.choch
-                ? structureBreak.direction
-                : "NONE",
-
-            currentPrice: round(current.close),
-
-            swingHigh: round(latestHigh?.price),
-            swingLow: round(latestLow?.price),
-
-            previousSwingHigh: round(previousHigh?.price),
-            previousSwingLow: round(previousLow?.price),
-
-            lowerHigh: Boolean(
-                latestHigh &&
-                previousHigh &&
-                latestHigh.price < previousHigh.price
-            ),
-
-            lowerLow: Boolean(
-                latestLow &&
-                previousLow &&
-                latestLow.price < previousLow.price
-            ),
-
-            higherHigh: Boolean(
-                latestHigh &&
-                previousHigh &&
-                latestHigh.price > previousHigh.price
-            ),
-
-            higherLow: Boolean(
-                latestLow &&
-                previousLow &&
-                latestLow.price > previousLow.price
-            ),
-
-            lastSwingHighTime: latestHigh?.time ?? null,
-            lastSwingLowTime: latestLow?.time ?? null,
-
-            liquidity: {
-                status: sweep
-                    ? `CONFIRMED ${sweep.type.replaceAll("_", "-")}`
-                    : "NO CONFIRMED SWEEP",
-
-                detected: sweepConfirmed,
-
-                sweepDirection: sweep?.direction ?? "NONE",
-
-                rejection: Boolean(sweep),
-
-                lowSweep: Boolean(
-                    sweep?.type === "SELL_SIDE_SWEEP"
-                ),
-
-                highSweep: Boolean(
-                    sweep?.type === "BUY_SIDE_SWEEP"
-                ),
-
-                liquidityLevel: round(sweep?.liquidityLevel),
-
-                sweepLow: round(sweep?.sweepLow),
-                sweepHigh: round(sweep?.sweepHigh),
-
-                time: sweep?.time ?? null
-            },
-
-            displacement: {
-                detected: Boolean(displacement),
+  result.currentPrice = round(price, 5);
+
+  result.swingHigh = lastHigh
+    ? round(lastHigh.price, 5)
+    : null;
 
-                direction: displacement?.direction ?? "NONE",
+  result.swingLow = lastLow
+    ? round(lastLow.price, 5)
+    : null;
+
+  result.previousSwingHigh = prevHigh
+    ? round(prevHigh.price, 5)
+    : null;
 
-                index: displacement?.index ?? null,
-                time: displacement?.time ?? null,
-
-                body: round(displacement?.body),
-                averageBody: round(displacement?.averageBody),
-                threshold: round(displacement?.threshold),
+  result.previousSwingLow = prevLow
+    ? round(prevLow.price, 5)
+    : null;
 
-                linkedToSweep: Boolean(displacement)
-            },
+  result.lowerHigh = lowerHigh;
+  result.lowerLow = lowerLow;
+  result.higherHigh = higherHigh;
+  result.higherLow = higherLow;
 
-            fvg: fvg
-                ? {
-                    detected: true,
+  result.lastSwingHighTime =
+    lastHigh?.time ?? null;
 
-                    direction: fvg.direction,
+  result.lastSwingLowTime =
+    lastLow?.time ?? null;
 
-                    high: round(fvg.high),
-                    low: round(fvg.low),
+  result.liquidity = {
+    status: sweep.detected
+      ? `CONFIRMED ${sweep.type}`
+      : 'NO SWEEP',
 
-                    index: fvg.index,
-                    time: fvg.time,
+    detected: sweep.detected,
 
-                    invalidated: fvg.invalidated,
+    sweepDirection: sweep.sweepDirection,
+    rejection: sweep.rejection,
 
-                    retest: fvg.retest,
+    lowSweep: sweep.lowSweep,
+    highSweep: sweep.highSweep,
 
-                    firstRetestIndex: fvg.firstRetestIndex,
-                    latestRetestIndex: fvg.latestRetestIndex,
+    liquidityLevel: round(
+      sweep.liquidityLevel,
+      5
+    ),
 
-                    currentRetest: fvg.currentRetest,
+    sweepLow: round(
+      sweep.sweepLow,
+      5
+    ),
 
-                    quality: fvg.quality,
+    sweepHigh: round(
+      sweep.sweepHigh,
+      5
+    ),
 
-                    position: fvg.position
-                }
-                : {
-                    detected: false,
-                    direction: "NONE",
+    time: sweep.time,
+  };
 
-                    high: null,
-                    low: null,
+  result.displacement = {
+    ...displacement,
 
-                    invalidated: false,
+    body: round(
+      displacement.body,
+      5
+    ),
 
-                    retest: false,
-                    currentRetest: false,
+    averageBody: round(
+      displacement.averageBody,
+      5
+    ),
 
-                    quality: null,
-                    position: "OUTSIDE"
-                },
-
-            setup: {
-                status: entryConfirmed
-                    ? "CONFIRMED"
-                    : "WAITING",
-
-                sweepConfirmed,
-                displacementConfirmed,
-                structureBreakConfirmed,
+    threshold: round(
+      displacement.threshold,
+      5
+    ),
+  };
 
-                fvgConfirmed,
-                fvgRetest,
+  result.fvg = {
+    detected: fvg.detected,
+    direction: fvg.direction,
 
-                fvgInvalidated
-            },
+    high: round(fvg.high, 5),
+    low: round(fvg.low, 5),
 
-            entry: {
-                status: entryStatus,
-                confirmed: entryConfirmed,
+    index: fvg.index,
+    time: fvg.time,
 
-                direction: trade?.direction ?? "NONE",
+    invalidated: fvg.invalidated,
 
-                price: entryConfirmed ? trade.price : null,
+    retest: retest.detected,
 
-                stopLoss: entryConfirmed
-                    ? trade.stopLoss
-                    : null,
+    firstRetestIndex:
+      retest.firstRetestIndex,
 
-                takeProfit1: entryConfirmed
-                    ? trade.takeProfit1
-                    : null,
+    latestRetestIndex:
+      retest.latestRetestIndex,
 
-                takeProfit2: entryConfirmed
-                    ? trade.takeProfit2
-                    : null,
+    currentRetest:
+      retest.currentCandle,
 
-                takeProfit3: entryConfirmed
-                    ? trade.takeProfit3
-                    : null,
+    quality: retest.quality,
+  };
 
-                riskDistance: trade?.riskDistance ?? null,
+  result.setup = {
+    status: entryConfirmed
+      ? 'CONFIRMED'
+      : 'WAITING',
 
-                riskReward: entryConfirmed
-                    ? trade.riskReward
-                    : null,
+    sweepConfirmed: sweep.detected,
 
-                positionSize
-            },
+    displacementConfirmed:
+      displacement.detected,
 
-            riskFilter: {
-                accountBalance: settings.accountBalance,
-                riskPercent: settings.riskPercent,
+    structureBreakConfirmed:
+      structureBreak.detected,
 
-                maxRiskDistance: settings.maxRiskDistance,
+    fvgConfirmed: fvg.detected,
 
-                maximumRetestRangeMultiple:
-                    settings.maxRetestRangeMultiple,
+    fvgRetest: retestValid,
 
-                riskDistance: trade?.riskDistance ?? null,
+    fvgInvalidated: fvg.invalidated,
+  };
 
-                accepted: entryConfirmed,
-
-                reason: invalidReason
-            },
+  result.entry = {
+    status: entryStatus,
+    confirmed: entryConfirmed,
 
-            confirmationScore: {
-                score,
-                maximum: 8,
+    direction: entryConfirmed
+      ? entryDirection
+      : 'NONE',
 
-                percentage: Math.round(score / 8 * 100),
+    price: entryConfirmed
+      ? round(price, 5)
+      : null,
 
-                validThreshold: entryConfirmed
-            },
+    stopLoss: entryConfirmed
+      ? round(stopLoss, 5)
+      : null,
 
-            sequence: {
-                sweep: sweep
-                    ? {
-                        detected: true,
-                        index: sweep.index,
-                        time: sweep.time,
-                        direction: sweep.direction,
+    takeProfit1: entryConfirmed
+      ? round(tp1, 5)
+      : null,
 
-                        liquidityLevel: round(sweep.liquidityLevel),
+    takeProfit2: entryConfirmed
+      ? round(tp2, 5)
+      : null,
 
-                        sweepLow: round(sweep.sweepLow),
-                        sweepHigh: round(sweep.sweepHigh)
-                    }
-                    : {
-                        detected: false
-                    },
+    takeProfit3: entryConfirmed
+      ? round(tp3, 5)
+      : null,
 
-                displacement: displacement
-                    ? {
-                        detected: true,
-                        index: displacement.index,
-                        time: displacement.time,
-                        direction: displacement.direction
-                    }
-                    : {
-                        detected: false
-                    },
+    riskDistance: entryConfirmed
+      ? round(riskDistance, 5)
+      : null,
 
-                structureBreak: structureBreak
-                    ? {
-                        detected: true,
+    riskReward: entryConfirmed
+      ? riskReward
+      : null,
 
-                        bos: structureBreak.bos,
-                        choch: structureBreak.choch,
+    positionSize,
+  };
 
-                        direction: structureBreak.direction,
-                        previousTrend: structureBreak.previousTrend,
+  result.riskFilter = {
+    accountBalance: options.accountBalance,
 
-                        index: structureBreak.index,
-                        time: structureBreak.time,
+    riskPercent: options.riskPercent,
 
-                        brokenLevel: round(structureBreak.brokenLevel)
-                    }
-                    : {
-                        detected: false
-                    },
+    maxRiskDistance:
+      options.maxRiskDistance,
 
-                fvg: fvg
-                    ? {
-                        detected: true,
+    maximumRetestRangeMultiple:
+      options.maximumRetestRangeMultiple,
 
-                        index: fvg.index,
-                        time: fvg.time,
+    riskDistance:
+      riskDistance === null
+        ? null
+        : round(riskDistance, 5),
 
-                        direction: fvg.direction,
+    accepted: entryConfirmed,
 
-                        high: round(fvg.high),
-                        low: round(fvg.low),
+    reason: riskReason,
+  };
 
-                        invalidated: fvg.invalidated
-                    }
-                    : {
-                        detected: false
-                    },
+  result.confirmationScore = {
+    score,
+    maximum: scoreItems.length,
+    percentage,
 
-                retest: {
-                    detected: Boolean(fvg?.retest),
+    validThreshold:
+      entryConfirmed &&
+      score === scoreItems.length,
+  };
 
-                    currentCandle: fvgRetest,
+  result.sequence = {
+    sweep: {
+      detected: sweep.detected,
+      index: sweep.index,
+      time: sweep.time,
+      direction: sweep.direction,
 
-                    index: fvg?.latestRetestIndex ?? null,
+      liquidityLevel: round(
+        sweep.liquidityLevel,
+        5
+      ),
 
-                    time: fvg?.latestRetestIndex !== null &&
-                        fvg?.latestRetestIndex !== undefined
-                        ? candles[fvg.latestRetestIndex]?.time ?? null
-                        : null
-                },
+      sweepLow: round(
+        sweep.sweepLow,
+        5
+      ),
 
-                validOrder: Boolean(
-                    sweep &&
-                    displacement &&
-                    structureBreak &&
-                    fvg &&
-                    sweep.index < displacement.index &&
-                    displacement.index <= structureBreak.index &&
-                    structureBreak.index < fvg.index
-                ),
+      sweepHigh: round(
+        sweep.sweepHigh,
+        5
+      ),
+    },
 
-                invalidReason,
+    displacement: {
+      detected: displacement.detected,
+      index: displacement.index,
+      time: displacement.time,
+      direction: displacement.direction,
+    },
 
-                complete: entryConfirmed
-            },
+    structureBreak: {
+      detected: structureBreak.detected,
+      bos: structureBreak.bos,
+      choch: structureBreak.choch,
+      direction: structureBreak.direction,
 
-            candleMetrics: {
-                upperWick: round(
-                    current.high - Math.max(current.open, current.close)
-                ),
+      previousTrend:
+        structureBreak.previousTrend,
 
-                lowerWick: round(
-                    Math.min(current.open, current.close) - current.low
-                ),
+      index: structureBreak.index,
+      time: structureBreak.time,
 
-                range: round(range),
+      brokenLevel: round(
+        structureBreak.brokenLevel,
+        5
+      ),
+    },
 
-                body: round(body(current))
-            }
-        }
-    };
+    fvg: {
+      detected: fvg.detected,
+      index: fvg.index,
+      time: fvg.time,
+      direction: fvg.direction,
+
+      high: round(fvg.high, 5),
+      low: round(fvg.low, 5),
+
+      invalidated: fvg.invalidated,
+    },
+
+    retest: {
+      detected: retest.detected,
+
+      currentCandle: retestValid,
+
+      index: retest.index,
+      time: retest.time,
+    },
+
+    validOrder,
+
+    invalidReason: entryConfirmed
+      ? null
+      : riskReason,
+
+    complete: entryConfirmed,
+  };
+
+  const upperWick =
+    last.high -
+    Math.max(last.open, last.close);
+
+  const lowerWick =
+    Math.min(last.open, last.close) -
+    last.low;
+
+  result.candleMetrics = {
+    upperWick: round(upperWick, 5),
+    lowerWick: round(lowerWick, 5),
+
+    range: round(
+      candleRange(last),
+      5
+    ),
+
+    body: round(
+      candleBody(last),
+      5
+    ),
+  };
+
+  return result;
 }
 
 export default analyzeMarketStructure;
